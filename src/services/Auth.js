@@ -1,37 +1,49 @@
 const bcrypt = require("bcryptjs");
 const UserRepository = require("../repositories/Auth");
+const TokenService = require("./Token");
 
 class AuthService {
-    async register(data) {
-        const existingUser = await UserRepository.findByEmail(data.email);
+  async register(data) {
+    const existingUser = await UserRepository.findByEmail(data.email);
+    if (existingUser) throw new Error("Email already in use");
 
-        if (existingUser) {
-            throw new Error("Email already in use");
-        }
+    const hashedPassword = await bcrypt.hash(data.password, 10);
+    const user = await UserRepository.create({ ...data, password: hashedPassword });
 
-        const hashedPassword = await bcrypt.hash(data.password, 10);
+    // Generate tokens on registration
+    const accessToken = TokenService.generateAccessToken({ id: user._id });
+    const refreshToken = TokenService.generateRefreshToken({ id: user._id });
 
-        return UserRepository.create({
-            ...data,
-            password: hashedPassword,
-        });
+    return { user, accessToken, refreshToken };
+  }
+
+  async login(email, password) {
+    const user = await UserRepository.findByEmail(email);
+    if (!user) throw new Error("Invalid credentials");
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) throw new Error("Invalid credentials");
+
+    const accessToken = TokenService.generateAccessToken({ id: user._id });
+    const refreshToken = TokenService.generateRefreshToken({ id: user._id });
+
+    return { user, accessToken, refreshToken };
+  }
+
+  async refreshTokens(refreshToken) {
+    try {
+      const payload = TokenService.verifyRefreshToken(refreshToken);
+      const user = await UserRepository.findById(payload.id);
+      if (!user) throw new Error("User not found");
+
+      const newAccessToken = TokenService.generateAccessToken({ id: user._id });
+      const newRefreshToken = TokenService.generateRefreshToken({ id: user._id });
+
+      return { accessToken: newAccessToken, refreshToken: newRefreshToken };
+    } catch (err) {
+      throw new Error("Invalid refresh token");
     }
-
-    async login(email, password) {
-        const user = await UserRepository.findByEmail(email);
-
-        if (!user) {
-            throw new Error("Invalid credentials");
-        }
-
-        const isMatch = await bcrypt.compare(password, user.password);
-
-        if (!isMatch) {
-            throw new Error("Invalid credentials");
-        }
-
-        return user;
-    }
+  }
 }
 
 module.exports = new AuthService();
