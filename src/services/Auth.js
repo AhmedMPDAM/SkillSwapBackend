@@ -44,6 +44,23 @@ class AuthService {
       throw new Error("Invalid refresh token");
     }
   }
+
+  async logout(userId, token) {
+    try {
+      // Verify user exists
+      const user = await UserRepository.findById(userId);
+      if (!user) throw new Error("User not found");
+
+      // Optional: Add token to blacklist or invalidate sessions
+      // This depends on your session management strategy
+      // Example: await TokenBlacklistRepository.create({ token, userId });
+
+      console.log(`User ${userId} logged out successfully`);
+      return { success: true, message: "Logged out successfully" };
+    } catch (err) {
+      throw new Error(err.message || "Logout failed");
+    }
+  }
 }
 
 module.exports = new AuthService();
