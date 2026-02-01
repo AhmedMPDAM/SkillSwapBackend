@@ -23,6 +23,10 @@ class ProfileController {
 
     async updateProfile(req, res, next) {
         try {
+            console.log('\n🔄 updateProfile called');
+            console.log('req.file exists:', !!req.file);
+            console.log('req.body:', req.body);
+
             const {
                 fullName,
                 bio,
@@ -34,21 +38,44 @@ class ProfileController {
                 fullName,
                 bio,
                 location,
-                socialLinks,
+                socialLinks: typeof socialLinks === 'string' ? JSON.parse(socialLinks) : socialLinks,
             };
 
             // Add profile image if file was uploaded
             if (req.file) {
-                updateData.profileImage = req.file.path;
+                console.log('📤 Processing uploaded file:', {
+                    fieldname: req.file.fieldname,
+                    originalname: req.file.originalname,
+                    path: req.file.path,
+                });
+
+                // Normalize path to use forward slashes and be relative to uploads folder
+                const filePath = req.file.path.replace(/\\/g, '/');
+                const uploadsIndex = filePath.indexOf('uploads');
+                updateData.profileImage = uploadsIndex > -1 
+                    ? filePath.substring(uploadsIndex)
+                    : filePath;
+                
+                console.log('✅ Normalized image path:', updateData.profileImage);
+            } else {
+                console.log('⚠️ No file uploaded - profileImage not updated');
             }
 
             const user = await UserRepository.findByIdAndUpdate(req.user.id, updateData);
             if (!user) {
+                console.log('❌ User not found:', req.user.id);
                 return res.status(404).json({ message: "User not found" });
             }
 
-            res.status(200).json({ message: "Profile updated successfully", user });
+            console.log('✅ User updated successfully');
+
+            // Return user without password
+            const userObject = user.toObject();
+            delete userObject.password;
+            res.status(200).json({ message: "Profile updated successfully", user: userObject });
         } catch (error) {
+            console.error('❌ Error in updateProfile:', error);
+            console.error('Error stack:', error.stack);
             next(error);
         }
     }
@@ -61,11 +88,21 @@ class ProfileController {
                 return res.status(400).json({ message: "Name, date, and issuedBy are required" });
             }
 
+            let documentUrl = null;
+            if (req.file) {
+                // Normalize path to use forward slashes and be relative to uploads folder
+                const filePath = req.file.path.replace(/\\/g, '/');
+                const uploadsIndex = filePath.indexOf('uploads');
+                documentUrl = uploadsIndex > -1 
+                    ? filePath.substring(uploadsIndex)
+                    : filePath;
+            }
+
             const certificateData = {
                 name,
                 date,
                 issuedBy,
-                documentUrl: req.file ? req.file.path : null,
+                documentUrl,
             };
 
             const user = await UserRepository.findByIdAndPushCertificate(req.user.id, certificateData);
@@ -73,8 +110,11 @@ class ProfileController {
                 return res.status(404).json({ message: "User not found" });
             }
 
-            res.status(201).json({ message: "Certificate added successfully", user });
+            const userObject = user.toObject();
+            delete userObject.password;
+            res.status(201).json({ message: "Certificate added successfully", user: userObject });
         } catch (error) {
+            console.error('Error in addCertificate:', error);
             next(error);
         }
     }
@@ -86,7 +126,12 @@ class ProfileController {
 
             const updateData = { name, date, issuedBy };
             if (req.file) {
-                updateData.documentUrl = req.file.path;
+                // Normalize path to use forward slashes and be relative to uploads folder
+                const filePath = req.file.path.replace(/\\/g, '/');
+                const uploadsIndex = filePath.indexOf('uploads');
+                updateData.documentUrl = uploadsIndex > -1 
+                    ? filePath.substring(uploadsIndex)
+                    : filePath;
             }
 
             const user = await UserRepository.findByIdAndUpdateCertificate(
@@ -98,8 +143,11 @@ class ProfileController {
                 return res.status(404).json({ message: "User or certificate not found" });
             }
 
-            res.status(200).json({ message: "Certificate updated successfully", user });
+            const userObject = user.toObject();
+            delete userObject.password;
+            res.status(200).json({ message: "Certificate updated successfully", user: userObject });
         } catch (error) {
+            console.error('Error in updateCertificate:', error);
             next(error);
         }
     }
@@ -113,8 +161,11 @@ class ProfileController {
                 return res.status(404).json({ message: "User or certificate not found" });
             }
 
-            res.status(200).json({ message: "Certificate deleted successfully", user });
+            const userObject = user.toObject();
+            delete userObject.password;
+            res.status(200).json({ message: "Certificate deleted successfully", user: userObject });
         } catch (error) {
+            console.error('Error in deleteCertificate:', error);
             next(error);
         }
     }
