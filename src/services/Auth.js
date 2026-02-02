@@ -1,6 +1,7 @@
 const bcrypt = require("bcryptjs");
 const UserRepository = require("../repositories/Auth");
 const TokenService = require("./Token");
+const CreditService = require("./Credit");
 
 class AuthService {
   async register(data) {
@@ -9,6 +10,9 @@ class AuthService {
 
     const hashedPassword = await bcrypt.hash(data.password, 10);
     const user = await UserRepository.create({ ...data, password: hashedPassword });
+
+    // Initialize user credits (5 crédits de démarrage)
+    await CreditService.initializeUserCredits(user._id);
 
     // Generate tokens on registration
     const accessToken = TokenService.generateAccessToken({ id: user._id });

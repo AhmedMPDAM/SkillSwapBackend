@@ -30,6 +30,7 @@ const userSchema = new mongoose.Schema(
             portfolio: { type: String, default: "" },
         },
         certificates: [certificateSchema],
+        credits: { type: Number, default: 5, min: 0 }, // 5 crédits de démarrage
     },
     { timestamps: true }
 );
