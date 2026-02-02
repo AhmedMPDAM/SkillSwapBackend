@@ -32,6 +32,15 @@ class AuthController {
         }
     }
 
+    async logout(req, res, next) {
+        try {
+            // Since we're using JWT tokens (stateless), we just need to confirm the logout
+            // The client will clear the tokens from storage
+            res.status(200).json({ message: 'Logged out successfully' });
+        } catch (error) {
+            next(error);
+        }
+    }
 
 }
 
