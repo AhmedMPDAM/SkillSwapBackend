@@ -19,19 +19,18 @@ const exchangeProposalSchema = new mongoose.Schema(
             required: true,
             trim: true,
         },
-        proposedDuration: {
-            type: Number,
+        acceptanceType: {
+            type: String,
+            enum: ["accept_deal", "admin_quantification"],
             required: true,
-            min: 0.5,
         },
-        proposedCredits: {
+        admin_quantification_cost: {
             type: Number,
-            required: true,
-            min: 0,
+            default: 0, // Will be 4 if admin_quantification is chosen
         },
         status: {
             type: String,
-            enum: ["pending", "accepted", "rejected", "cancelled"],
+            enum: ["pending", "accepted", "rejected", "cancelled", "admin_processing"],
             default: "pending",
             index: true,
         },

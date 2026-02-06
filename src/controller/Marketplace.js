@@ -48,7 +48,7 @@ class MarketplaceController {
             const page = parseInt(req.query.page) || 1;
             const limit = parseInt(req.query.limit) || 10;
             const searchQuery = req.query.q || "";
-            
+
             const filters = {};
             if (req.query.skillSearched) filters.skillSearched = req.query.skillSearched;
             if (req.query.category) filters.category = req.query.category;
@@ -132,16 +132,22 @@ class MarketplaceController {
      */
     async createProposal(req, res, next) {
         try {
-            const { requestId, coverLetter, proposedDuration, proposedCredits } = req.body;
+            const { requestId, coverLetter, acceptanceType } = req.body;
 
             if (!requestId) {
                 return res.status(400).json({ message: "requestId is required" });
             }
 
+            if (!acceptanceType || !['accept_deal', 'admin_quantification'].includes(acceptanceType)) {
+                return res.status(400).json({
+                    message: "Valid acceptanceType is required (accept_deal or admin_quantification)"
+                });
+            }
+
             const proposal = await MarketplaceService.createProposal(
                 req.user.id,
                 requestId,
-                { coverLetter, proposedDuration, proposedCredits }
+                { coverLetter, acceptanceType }
             );
 
             res.status(201).json({

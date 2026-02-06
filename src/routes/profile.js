@@ -55,7 +55,6 @@ router.put("/", authenticateToken, (req, res, next) => {
     } else {
 
     }
-    console.log('req.body fields:', Object.keys(req.body));
     next();
 }, (err, req, res, next) => {
     // Multer error handler

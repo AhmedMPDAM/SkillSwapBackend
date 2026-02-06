@@ -3,13 +3,13 @@ const UserRepository = require("../repositories/Auth");
 class ProfileController {
     async getProfile(req, res, next) {
         try {
-         
+
             const user = await UserRepository.findById(req.user.id);
             if (!user) {
-                
+
                 return res.status(404).json({ message: "User not found" });
             }
-       
+
             // Convert mongoose document to plain object and remove password
             const userObject = user.toObject();
             delete userObject.password;
@@ -23,9 +23,7 @@ class ProfileController {
 
     async updateProfile(req, res, next) {
         try {
-            console.log('\n🔄 updateProfile called');
-            console.log('req.file exists:', !!req.file);
-            console.log('req.body:', req.body);
+
 
             const {
                 fullName,
@@ -43,31 +41,19 @@ class ProfileController {
 
             // Add profile image if file was uploaded
             if (req.file) {
-                console.log('📤 Processing uploaded file:', {
-                    fieldname: req.file.fieldname,
-                    originalname: req.file.originalname,
-                    path: req.file.path,
-                });
 
                 // Normalize path to use forward slashes and be relative to uploads folder
                 const filePath = req.file.path.replace(/\\/g, '/');
                 const uploadsIndex = filePath.indexOf('uploads');
-                updateData.profileImage = uploadsIndex > -1 
+                updateData.profileImage = uploadsIndex > -1
                     ? filePath.substring(uploadsIndex)
                     : filePath;
-                
-                console.log('✅ Normalized image path:', updateData.profileImage);
-            } else {
-                console.log('⚠️ No file uploaded - profileImage not updated');
             }
 
             const user = await UserRepository.findByIdAndUpdate(req.user.id, updateData);
             if (!user) {
-                console.log('❌ User not found:', req.user.id);
                 return res.status(404).json({ message: "User not found" });
             }
-
-            console.log('✅ User updated successfully');
 
             // Return user without password
             const userObject = user.toObject();
@@ -93,7 +79,7 @@ class ProfileController {
                 // Normalize path to use forward slashes and be relative to uploads folder
                 const filePath = req.file.path.replace(/\\/g, '/');
                 const uploadsIndex = filePath.indexOf('uploads');
-                documentUrl = uploadsIndex > -1 
+                documentUrl = uploadsIndex > -1
                     ? filePath.substring(uploadsIndex)
                     : filePath;
             }
@@ -129,7 +115,7 @@ class ProfileController {
                 // Normalize path to use forward slashes and be relative to uploads folder
                 const filePath = req.file.path.replace(/\\/g, '/');
                 const uploadsIndex = filePath.indexOf('uploads');
-                updateData.documentUrl = uploadsIndex > -1 
+                updateData.documentUrl = uploadsIndex > -1
                     ? filePath.substring(uploadsIndex)
                     : filePath;
             }

@@ -30,7 +30,7 @@ class MarketplaceRepository {
      */
     async getFeed(page = 1, limit = 10, filters = {}) {
         const skip = (page - 1) * limit;
-        const query = { status: "open", ...filters };
+        const query = { status: { $in: ["open", "in_progress"] }, ...filters };
 
         const requests = await ExchangeRequest.find(query)
             .populate("userId", "fullName profileImage location")
@@ -56,7 +56,7 @@ class MarketplaceRepository {
      */
     async searchRequests(searchQuery, filters = {}, page = 1, limit = 10) {
         const skip = (page - 1) * limit;
-        const query = { status: "open" };
+        const query = { status: { $in: ["open", "in_progress"] } };
 
         // Text search
         if (searchQuery) {
@@ -174,7 +174,7 @@ class MarketplaceRepository {
      */
     async createProposal(proposalData) {
         const proposal = await ExchangeProposal.create(proposalData);
-        
+
         // Add proposal to request
         await ExchangeRequest.findByIdAndUpdate(
             proposalData.exchangeRequestId,
