@@ -13,6 +13,8 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/api/auth", require("./src/routes/auth"));
 app.use("/api/profile", require("./src/routes/profile"));
 app.use("/api/marketplace", require("./src/routes/marketplace"));
+app.use("/api/admin", require("./src/routes/admin"));
+app.use("/api/categories", require("./src/routes/category"));
 
 // Error handling middleware
 app.use((err, req, res, next) => {
