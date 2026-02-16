@@ -1,5 +1,7 @@
-const CreditHistory = require("../models/creditHistory");
-const User = require("../models/user");
+const CreditRepositoryClass = require("../repositories/Credit");
+const creditRepository = new CreditRepositoryClass();
+const UserRepositoryClass = require("../repositories/Auth");
+const userRepository = new UserRepositoryClass();
 
 class CreditService {
     /**
@@ -22,7 +24,7 @@ class CreditService {
 
         const multiplier = multipliers[complexity] || multipliers.moyen;
         const credits = Math.round(estimatedHours * multiplier * 10) / 10; // Round to 1 decimal
-        
+
         return credits;
     }
 
@@ -30,18 +32,18 @@ class CreditService {
      * Add credits to user account and create history entry
      */
     async addCredits(userId, amount, description, relatedRequest = null, relatedProposal = null) {
-        const user = await User.findById(userId);
+        const user = await userRepository.findById(userId);
         if (!user) {
             throw new Error("User not found");
         }
 
         const newBalance = (user.credits || 0) + amount;
-        
+
         // Update user credits
-        await User.findByIdAndUpdate(userId, { credits: newBalance });
+        await userRepository.updateUser(userId, { credits: newBalance });
 
         // Create history entry
-        await CreditHistory.create({
+        await creditRepository.create({
             userId,
             type: "gain",
             amount,
@@ -58,7 +60,7 @@ class CreditService {
      * Deduct credits from user account and create history entry
      */
     async deductCredits(userId, amount, description, relatedRequest = null, relatedProposal = null) {
-        const user = await User.findById(userId);
+        const user = await userRepository.findById(userId);
         if (!user) {
             throw new Error("User not found");
         }
@@ -69,12 +71,12 @@ class CreditService {
         }
 
         const newBalance = currentCredits - amount;
-        
+
         // Update user credits
-        await User.findByIdAndUpdate(userId, { credits: newBalance });
+        await userRepository.updateUser(userId, { credits: newBalance });
 
         // Create history entry
-        await CreditHistory.create({
+        await creditRepository.create({
             userId,
             type: "depense",
             amount,
@@ -91,25 +93,20 @@ class CreditService {
      * Get credit history for a user
      */
     async getCreditHistory(userId, limit = 50, skip = 0) {
-        return CreditHistory.find({ userId })
-            .sort({ createdAt: -1 })
-            .limit(limit)
-            .skip(skip)
-            .populate("relatedRequest", "title")
-            .populate("relatedProposal", "coverLetter");
+        return await creditRepository.find({ userId }, { createdAt: -1 }, limit, skip);
     }
 
     /**
      * Initialize user with 5 starting credits
      */
     async initializeUserCredits(userId) {
-        const user = await User.findById(userId);
+        const user = await userRepository.findById(userId);
         if (!user) {
             throw new Error("User not found");
         }
 
         // Check if user already has a starting bonus in history
-        const existingBonus = await CreditHistory.findOne({
+        const existingBonus = await creditRepository.findOne({
             userId,
             type: "bonus_demarrage",
         });
@@ -118,11 +115,11 @@ class CreditService {
         if (!existingBonus) {
             // Ensure user has 5 credits (in case default wasn't applied)
             if (!user.credits || user.credits === 0) {
-                await User.findByIdAndUpdate(userId, { credits: 5 });
+                await userRepository.updateUser(userId, { credits: 5 });
             }
-            
+
             // Create history entry for starting bonus
-            await CreditHistory.create({
+            await creditRepository.create({
                 userId,
                 type: "bonus_demarrage",
                 amount: 5,
@@ -134,4 +131,3 @@ class CreditService {
 }
 
 module.exports = new CreditService();
-

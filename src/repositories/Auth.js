@@ -2,31 +2,39 @@ const User = require("../models/user");
 
 class UserRepository {
     async findByEmail(email) {
-        return User.findOne({ email });
+        return await User.findOne({ email }).lean();
     }
 
     async create(userData) {
-        return User.create(userData);
+        return await User.create(userData);
     }
 
     async findById(id) {
-        return User.findById(id);
+        return await User.findById(id).lean();
     }
 
-    async findByIdAndUpdate(id, updateData) {
-        return User.findByIdAndUpdate(id, updateData, { new: true, runValidators: true });
+    async updateUser(id, updateData) {
+        return await User.findByIdAndUpdate(
+            id,
+            { $set: updateData },
+            { new: true, runValidators: true }
+        ).lean();
     }
 
-    async findByIdAndPushCertificate(userId, certificateData) {
-        return User.findByIdAndUpdate(
+    async updateUserRaw(id, updateQuery) {
+        return await User.findByIdAndUpdate(id, updateQuery, { new: true, runValidators: true }).lean();
+    }
+
+    async addCertificate(userId, certificateData) {
+        return await User.findByIdAndUpdate(
             userId,
             { $push: { certificates: certificateData } },
             { new: true, runValidators: true }
-        );
+        ).lean();
     }
 
-    async findByIdAndUpdateCertificate(userId, certificateId, updateData) {
-        return User.findOneAndUpdate(
+    async updateCertificate(userId, certificateId, updateData) {
+        return await User.findOneAndUpdate(
             { _id: userId, "certificates._id": certificateId },
             {
                 $set: {
@@ -37,16 +45,16 @@ class UserRepository {
                 },
             },
             { new: true, runValidators: true }
-        );
+        ).lean();
     }
 
-    async findByIdAndPullCertificate(userId, certificateId) {
-        return User.findByIdAndUpdate(
+    async removeCertificate(userId, certificateId) {
+        return await User.findByIdAndUpdate(
             userId,
             { $pull: { certificates: { _id: certificateId } } },
             { new: true }
-        );
+        ).lean();
     }
 }
 
-module.exports = new UserRepository();
+module.exports = UserRepository;

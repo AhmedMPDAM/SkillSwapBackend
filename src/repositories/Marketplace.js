@@ -6,14 +6,14 @@ class MarketplaceRepository {
      * Create a new exchange request
      */
     async createRequest(requestData) {
-        return ExchangeRequest.create(requestData);
+        return await ExchangeRequest.create(requestData);
     }
 
     /**
      * Get request by ID with populated user
      */
     async getRequestById(requestId) {
-        return ExchangeRequest.findById(requestId)
+        return await ExchangeRequest.findById(requestId)
             .populate("userId", "fullName profileImage location skills")
             .populate("selectedProposal")
             .populate({
@@ -22,252 +22,106 @@ class MarketplaceRepository {
                     path: "proposerId",
                     select: "fullName profileImage location skills",
                 },
-            });
-    }
-
-    /**
-     * Get feed of requests with pagination
-     */
-    async getFeed(page = 1, limit = 10, filters = {}) {
-        const skip = (page - 1) * limit;
-        const query = { status: { $in: ["open", "in_progress"] }, ...filters };
-
-        const requests = await ExchangeRequest.find(query)
-            .populate("userId", "fullName profileImage location")
-            .sort({ createdAt: -1 })
-            .limit(limit)
-            .skip(skip);
-
-        const total = await ExchangeRequest.countDocuments(query);
-
-        return {
-            requests,
-            pagination: {
-                page,
-                limit,
-                total,
-                pages: Math.ceil(total / limit),
-            },
-        };
-    }
-
-    /**
-     * Search requests with advanced filters
-     */
-    async searchRequests(searchQuery, filters = {}, page = 1, limit = 10) {
-        const skip = (page - 1) * limit;
-        const query = { status: { $in: ["open", "in_progress"] } };
-
-        // Text search
-        if (searchQuery) {
-            query.$text = { $search: searchQuery };
-        }
-
-        // Apply filters
-        if (filters.skillSearched) {
-            query.skillSearched = { $regex: filters.skillSearched, $options: "i" };
-        }
-        if (filters.category) {
-            query.category = filters.category;
-        }
-        if (filters.level) {
-            query.level = filters.level;
-        }
-        if (filters.location) {
-            query.location = { $regex: filters.location, $options: "i" };
-        }
-        if (filters.minCredits !== undefined) {
-            query.estimatedCredits = { $gte: filters.minCredits };
-        }
-        if (filters.maxCredits !== undefined) {
-            query.estimatedCredits = {
-                ...query.estimatedCredits,
-                $lte: filters.maxCredits,
-            };
-        }
-        if (filters.deadline) {
-            query.desiredDeadline = { $lte: new Date(filters.deadline) };
-        }
-
-        const requests = await ExchangeRequest.find(query)
-            .populate("userId", "fullName profileImage location")
-            .sort(searchQuery ? { score: { $meta: "textScore" } } : { createdAt: -1 })
-            .limit(limit)
-            .skip(skip);
-
-        const total = await ExchangeRequest.countDocuments(query);
-
-        return {
-            requests,
-            pagination: {
-                page,
-                limit,
-                total,
-                pages: Math.ceil(total / limit),
-            },
-        };
-    }
-
-    /**
-     * Get user's requests
-     */
-    async getUserRequests(userId, page = 1, limit = 10) {
-        const skip = (page - 1) * limit;
-
-        const requests = await ExchangeRequest.find({ userId })
-            .populate("selectedProposal")
-            .populate({
-                path: "proposals",
-                populate: {
-                    path: "proposerId",
-                    select: "fullName profileImage location",
-                },
             })
-            .sort({ createdAt: -1 })
-            .limit(limit)
-            .skip(skip);
-
-        const total = await ExchangeRequest.countDocuments({ userId });
-
-        return {
-            requests,
-            pagination: {
-                page,
-                limit,
-                total,
-                pages: Math.ceil(total / limit),
-            },
-        };
+            .lean();
     }
 
     /**
-     * Update request
+     * Find requests with optional query, sorting, pagination
+     */
+    async findRequests(query, sort = { createdAt: -1 }, skip = 0, limit = 10) {
+        return await ExchangeRequest.find(query)
+            .populate("userId", "fullName profileImage location")
+            .sort(sort)
+            .skip(skip)
+            .limit(limit)
+            .lean();
+    }
+
+    /**
+     * Count requests with optional query
+     */
+    async countRequests(query) {
+        return await ExchangeRequest.countDocuments(query);
+    }
+
+    /**
+     * Update request by ID with optional update data
      */
     async updateRequest(requestId, updateData) {
-        return ExchangeRequest.findByIdAndUpdate(
+        return await ExchangeRequest.findByIdAndUpdate(
             requestId,
-            updateData,
+            { $set: updateData },
             { new: true, runValidators: true }
-        );
+        ).lean();
+    }
+
+    async updateRequestRaw(requestId, updateQuery) {
+        return await ExchangeRequest.findByIdAndUpdate(
+            requestId,
+            updateQuery,
+            { new: true, runValidators: true }
+        ).lean();
     }
 
     /**
-     * Delete request
+     * Delete request by ID
      */
     async deleteRequest(requestId) {
-        return ExchangeRequest.findByIdAndDelete(requestId);
+        return await ExchangeRequest.findByIdAndDelete(requestId).lean();
     }
 
     /**
-     * Increment view count
-     */
-    async incrementViews(requestId) {
-        return ExchangeRequest.findByIdAndUpdate(
-            requestId,
-            { $inc: { views: 1 } },
-            { new: true }
-        );
-    }
-
-    /**
-     * Create a proposal
+     * Create a new exchange proposal
      */
     async createProposal(proposalData) {
-        const proposal = await ExchangeProposal.create(proposalData);
-
-        // Add proposal to request
-        await ExchangeRequest.findByIdAndUpdate(
-            proposalData.exchangeRequestId,
-            { $push: { proposals: proposal._id } }
-        );
-
-        return proposal;
+        return await ExchangeProposal.create(proposalData);
     }
 
     /**
-     * Get proposal by ID
+     * Get proposal by ID with populated exchange request and proposer
      */
     async getProposalById(proposalId) {
-        return ExchangeProposal.findById(proposalId)
+        return await ExchangeProposal.findById(proposalId)
             .populate("exchangeRequestId", "title description userId")
-            .populate("proposerId", "fullName profileImage location skills");
-    }
-
-    /**
-     * Get proposals for a request
-     */
-    async getRequestProposals(requestId) {
-        return ExchangeProposal.find({ exchangeRequestId: requestId })
             .populate("proposerId", "fullName profileImage location skills")
-            .sort({ createdAt: -1 });
+            .lean();
     }
 
     /**
-     * Get user's proposals
+     * Find proposals with optional query, sorting, pagination
      */
-    async getUserProposals(userId, page = 1, limit = 10) {
-        const skip = (page - 1) * limit;
-
-        const proposals = await ExchangeProposal.find({ proposerId: userId })
+    async findProposals(query, sort = { createdAt: -1 }, skip = 0, limit = 10) {
+        return await ExchangeProposal.find(query)
+            .populate("proposerId", "fullName profileImage location skills")
             .populate("exchangeRequestId", "title description status userId")
-            .sort({ createdAt: -1 })
+            .sort(sort)
+            .skip(skip)
             .limit(limit)
-            .skip(skip);
-
-        const total = await ExchangeProposal.countDocuments({ proposerId: userId });
-
-        return {
-            proposals,
-            pagination: {
-                page,
-                limit,
-                total,
-                pages: Math.ceil(total / limit),
-            },
-        };
+            .lean();
     }
 
     /**
-     * Update proposal
+     * Count proposals with optional query
+     */
+    async countProposals(query) {
+        return await ExchangeProposal.countDocuments(query);
+    }
+
+    /**
+     * Update proposal by ID with optional update data
      */
     async updateProposal(proposalId, updateData) {
-        return ExchangeProposal.findByIdAndUpdate(
+        return await ExchangeProposal.findByIdAndUpdate(
             proposalId,
-            updateData,
+            { $set: updateData },
             { new: true, runValidators: true }
-        );
+        ).lean();
     }
 
-    /**
-     * Accept a proposal (reject others automatically)
-     */
-    async acceptProposal(requestId, proposalId) {
-        // Reject all other proposals for this request
-        await ExchangeProposal.updateMany(
-            {
-                exchangeRequestId: requestId,
-                _id: { $ne: proposalId },
-                status: "pending",
-            },
-            { status: "rejected" }
-        );
-
-        // Accept the selected proposal
-        const proposal = await ExchangeProposal.findByIdAndUpdate(
-            proposalId,
-            { status: "accepted" },
-            { new: true }
-        );
-
-        // Update request status and selected proposal
-        await ExchangeRequest.findByIdAndUpdate(requestId, {
-            status: "in_progress",
-            selectedProposal: proposalId,
-        });
-
-        return proposal;
+    async updateManyProposals(query, update) {
+        return await ExchangeProposal.updateMany(query, { $set: update });
     }
 }
 
-module.exports = new MarketplaceRepository();
-
+module.exports = MarketplaceRepository;

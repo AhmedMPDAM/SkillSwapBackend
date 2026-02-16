@@ -1,4 +1,5 @@
-const MarketplaceRepository = require("../repositories/Marketplace");
+const MarketplaceRepositoryClass = require("../repositories/Marketplace");
+const marketplaceRepository = new MarketplaceRepositoryClass();
 const CreditService = require("./Credit");
 
 class MarketplaceService {
@@ -37,7 +38,7 @@ class MarketplaceService {
         );
 
         // Create request
-        const request = await MarketplaceRepository.createRequest({
+        const request = await marketplaceRepository.createRequest({
             userId,
             title,
             description,
@@ -60,14 +61,14 @@ class MarketplaceService {
      * Get request by ID and increment views
      */
     async getRequestById(requestId, incrementViews = true) {
-        const request = await MarketplaceRepository.getRequestById(requestId);
+        const request = await marketplaceRepository.getRequestById(requestId);
 
         if (!request) {
             throw new Error("Request not found");
         }
 
         if (incrementViews) {
-            await MarketplaceRepository.incrementViews(requestId);
+            await marketplaceRepository.updateRequestRaw(requestId, { $inc: { views: 1 } });
         }
 
         return request;
@@ -77,34 +78,106 @@ class MarketplaceService {
      * Get feed of requests
      */
     async getFeed(page = 1, limit = 10, filters = {}) {
-        return MarketplaceRepository.getFeed(page, limit, filters);
+        const skip = (page - 1) * limit;
+        const query = { status: { $in: ["open", "in_progress"] }, ...filters };
+
+        const requests = await marketplaceRepository.findRequests(query, { createdAt: -1 }, skip, limit);
+        const total = await marketplaceRepository.countRequests(query);
+
+        return {
+            requests,
+            pagination: {
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit),
+            },
+        };
     }
 
     /**
      * Search requests with filters
      */
     async searchRequests(searchQuery, filters = {}, page = 1, limit = 10) {
-        return MarketplaceRepository.searchRequests(searchQuery, filters, page, limit);
+        const skip = (page - 1) * limit;
+        const query = { status: { $in: ["open", "in_progress"] } };
+
+        // Text search
+        if (searchQuery) {
+            query.$text = { $search: searchQuery };
+        }
+
+        // Apply filters
+        if (filters.skillSearched) {
+            query.skillSearched = { $regex: filters.skillSearched, $options: "i" };
+        }
+        if (filters.category) {
+            query.category = filters.category;
+        }
+        if (filters.level) {
+            query.level = filters.level;
+        }
+        if (filters.location) {
+            query.location = { $regex: filters.location, $options: "i" };
+        }
+        if (filters.minCredits !== undefined) {
+            query.estimatedCredits = { $gte: filters.minCredits };
+        }
+        if (filters.maxCredits !== undefined) {
+            query.estimatedCredits = {
+                ...query.estimatedCredits,
+                $lte: filters.maxCredits,
+            };
+        }
+        if (filters.deadline) {
+            query.desiredDeadline = { $lte: new Date(filters.deadline) };
+        }
+
+        const sort = searchQuery ? { score: { $meta: "textScore" } } : { createdAt: -1 };
+
+        const requests = await marketplaceRepository.findRequests(query, sort, skip, limit);
+        const total = await marketplaceRepository.countRequests(query);
+
+        return {
+            requests,
+            pagination: {
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit),
+            },
+        };
     }
 
     /**
      * Get user's requests
      */
     async getUserRequests(userId, page = 1, limit = 10) {
-        return MarketplaceRepository.getUserRequests(userId, page, limit);
+        const skip = (page - 1) * limit;
+        const query = { userId };
+        const requests = await marketplaceRepository.findRequests(query, { createdAt: -1 }, skip, limit);
+        const total = await marketplaceRepository.countRequests(query);
+
+        return {
+            requests,
+            pagination: { page, limit, total, pages: Math.ceil(total / limit) }
+        };
     }
 
     /**
      * Update request (only by owner)
      */
     async updateRequest(requestId, userId, updateData) {
-        const request = await MarketplaceRepository.getRequestById(requestId);
+        const request = await marketplaceRepository.getRequestById(requestId);
 
         if (!request) {
             throw new Error("Request not found");
         }
 
-        if (request.userId.toString() !== userId) {
+        // Handle populated userId
+        const requestUserId = request.userId._id ? request.userId._id.toString() : request.userId.toString();
+
+        if (requestUserId !== userId) {
             throw new Error("Unauthorized: You can only update your own requests");
         }
 
@@ -124,24 +197,26 @@ class MarketplaceService {
             updateData.desiredDeadline = new Date(updateData.desiredDeadline);
         }
 
-        return MarketplaceRepository.updateRequest(requestId, updateData);
+        return marketplaceRepository.updateRequest(requestId, updateData);
     }
 
     /**
      * Delete request (only by owner)
      */
     async deleteRequest(requestId, userId) {
-        const request = await MarketplaceRepository.getRequestById(requestId);
+        const request = await marketplaceRepository.getRequestById(requestId);
 
         if (!request) {
             throw new Error("Request not found");
         }
 
-        if (request.userId.toString() !== userId) {
+        const requestUserId = request.userId._id ? request.userId._id.toString() : request.userId.toString();
+
+        if (requestUserId !== userId) {
             throw new Error("Unauthorized: You can only delete your own requests");
         }
 
-        return MarketplaceRepository.deleteRequest(requestId);
+        return marketplaceRepository.deleteRequest(requestId);
     }
 
     /**
@@ -164,7 +239,7 @@ class MarketplaceService {
         }
 
         // Check if request exists and is open
-        const request = await MarketplaceRepository.getRequestById(requestId);
+        const request = await marketplaceRepository.getRequestById(requestId);
         if (!request) {
             throw new Error("Request not found");
         }
@@ -173,15 +248,17 @@ class MarketplaceService {
             throw new Error("You can only propose on open requests");
         }
 
+        const requestUserId = request.userId._id ? request.userId._id.toString() : request.userId.toString();
+
         // Check if user is not the request owner
-        if (request.userId.toString() === userId) {
+        if (requestUserId === userId) {
             throw new Error("You cannot propose on your own request");
         }
 
         // Check if user already has a pending proposal
-        const existingProposal = await MarketplaceRepository.getRequestProposals(requestId);
-        const hasPendingProposal = existingProposal.some(
-            (p) => p.proposerId.toString() === userId && (p.status === "pending" || p.status === "admin_processing")
+        const existingProposals = await marketplaceRepository.findProposals({ exchangeRequestId: requestId });
+        const hasPendingProposal = existingProposals.some(
+            (p) => (p.proposerId._id ? p.proposerId._id.toString() : p.proposerId.toString()) === userId && (p.status === "pending" || p.status === "admin_processing")
         );
 
         if (hasPendingProposal) {
@@ -200,7 +277,7 @@ class MarketplaceService {
         }
 
         // Create proposal
-        const proposal = await MarketplaceRepository.createProposal({
+        const proposal = await marketplaceRepository.createProposal({
             exchangeRequestId: requestId,
             proposerId: userId,
             coverLetter,
@@ -209,16 +286,19 @@ class MarketplaceService {
             status,
         });
 
+        // Add proposal to request
+        await marketplaceRepository.updateRequestRaw(requestId, { $push: { proposals: proposal._id } });
+
         // If accept_deal, update request status to in_progress and set selected proposal
         if (acceptanceType === "accept_deal") {
-            await MarketplaceRepository.updateRequest(requestId, {
+            await marketplaceRepository.updateRequest(requestId, {
                 status: "in_progress",
                 selectedProposal: proposal._id,
             });
 
             // Deduct estimated credits from request owner
             await CreditService.deductCredits(
-                request.userId.toString(),
+                requestUserId,
                 request.estimatedCredits,
                 `Acceptation immédiate de proposition pour: ${request.title}`,
                 requestId,
@@ -233,38 +313,50 @@ class MarketplaceService {
      * Get proposals for a request
      */
     async getRequestProposals(requestId, userId) {
-        const request = await MarketplaceRepository.getRequestById(requestId);
+        const request = await marketplaceRepository.getRequestById(requestId);
 
         if (!request) {
             throw new Error("Request not found");
         }
 
+        const requestUserId = request.userId._id ? request.userId._id.toString() : request.userId.toString();
+
         // Only request owner can see proposals
-        if (request.userId.toString() !== userId) {
+        if (requestUserId !== userId) {
             throw new Error("Unauthorized: Only request owner can view proposals");
         }
 
-        return MarketplaceRepository.getRequestProposals(requestId);
+        return marketplaceRepository.findProposals({ exchangeRequestId: requestId });
     }
 
     /**
      * Get user's proposals
      */
     async getUserProposals(userId, page = 1, limit = 10) {
-        return MarketplaceRepository.getUserProposals(userId, page, limit);
+        const skip = (page - 1) * limit;
+        const query = { proposerId: userId };
+        const proposals = await marketplaceRepository.findProposals(query, { createdAt: -1 }, skip, limit);
+        const total = await marketplaceRepository.countProposals(query);
+
+        return {
+            proposals,
+            pagination: { page, limit, total, pages: Math.ceil(total / limit) }
+        };
     }
 
     /**
      * Accept a proposal (only by request owner)
      */
     async acceptProposal(requestId, proposalId, userId) {
-        const request = await MarketplaceRepository.getRequestById(requestId);
+        const request = await marketplaceRepository.getRequestById(requestId);
 
         if (!request) {
             throw new Error("Request not found");
         }
 
-        if (request.userId.toString() !== userId) {
+        const requestUserId = request.userId._id ? request.userId._id.toString() : request.userId.toString();
+
+        if (requestUserId !== userId) {
             throw new Error("Unauthorized: Only request owner can accept proposals");
         }
 
@@ -272,29 +364,47 @@ class MarketplaceService {
             throw new Error("You can only accept proposals for open requests");
         }
 
-        const proposal = await MarketplaceRepository.getProposalById(proposalId);
+        const proposal = await marketplaceRepository.getProposalById(proposalId);
         if (!proposal) {
             throw new Error("Proposal not found");
         }
 
-        if (proposal.exchangeRequestId.toString() !== requestId) {
+        const proposalRequestId = proposal.exchangeRequestId._id ? proposal.exchangeRequestId._id.toString() : proposal.exchangeRequestId.toString();
+
+        if (proposalRequestId !== requestId) {
             throw new Error("Proposal does not belong to this request");
         }
 
-        // Accept proposal and reject others
-        const acceptedProposal = await MarketplaceRepository.acceptProposal(requestId, proposalId);
+        // Reject all other proposals for this request
+        await marketplaceRepository.updateManyProposals(
+            {
+                exchangeRequestId: requestId,
+                _id: { $ne: proposalId },
+                status: "pending",
+            },
+            { status: "rejected" }
+        );
+
+        // Accept the selected proposal
+        const acceptedProposal = await marketplaceRepository.updateProposal(
+            proposalId,
+            { status: "accepted" }
+        );
+
+        // Update request status and selected proposal
+        await marketplaceRepository.updateRequest(requestId, {
+            status: "in_progress",
+            selectedProposal: proposalId,
+        });
 
         // Deduct credits from request owner
         await CreditService.deductCredits(
             userId,
-            acceptedProposal.proposedCredits,
+            acceptedProposal.proposedCredits || 0, // Fallback if proposedCredits missing?
             `Acceptation de proposition pour: ${request.title}`,
             requestId,
             proposalId
         );
-
-        // Add credits to proposer (will be paid when work is completed)
-        // This will be handled when the work is marked as completed
 
         return acceptedProposal;
     }
@@ -303,32 +413,37 @@ class MarketplaceService {
      * Reject a proposal
      */
     async rejectProposal(proposalId, userId) {
-        const proposal = await MarketplaceRepository.getProposalById(proposalId);
+        const proposal = await marketplaceRepository.getProposalById(proposalId);
 
         if (!proposal) {
             throw new Error("Proposal not found");
         }
 
-        const request = await MarketplaceRepository.getRequestById(proposal.exchangeRequestId);
+        const proposalRequestId = proposal.exchangeRequestId._id ? proposal.exchangeRequestId._id.toString() : proposal.exchangeRequestId.toString();
+        const request = await marketplaceRepository.getRequestById(proposalRequestId);
 
-        if (request.userId.toString() !== userId) {
+        const requestUserId = request.userId._id ? request.userId._id.toString() : request.userId.toString();
+
+        if (requestUserId !== userId) {
             throw new Error("Unauthorized: Only request owner can reject proposals");
         }
 
-        return MarketplaceRepository.updateProposal(proposalId, { status: "rejected" });
+        return marketplaceRepository.updateProposal(proposalId, { status: "rejected" });
     }
 
     /**
      * Complete an exchange (mark request as completed)
      */
     async completeExchange(requestId, userId, rating, feedback) {
-        const request = await MarketplaceRepository.getRequestById(requestId);
+        const request = await marketplaceRepository.getRequestById(requestId);
 
         if (!request) {
             throw new Error("Request not found");
         }
 
-        if (request.userId.toString() !== userId) {
+        const requestUserId = request.userId._id ? request.userId._id.toString() : request.userId.toString();
+
+        if (requestUserId !== userId) {
             throw new Error("Unauthorized: Only request owner can complete exchanges");
         }
 
@@ -340,29 +455,33 @@ class MarketplaceService {
             throw new Error("No selected proposal found");
         }
 
-        const proposal = await MarketplaceRepository.getProposalById(request.selectedProposal);
+        const selectedProposalId = request.selectedProposal._id ? request.selectedProposal._id.toString() : request.selectedProposal.toString();
+
+        const proposal = await marketplaceRepository.getProposalById(selectedProposalId);
 
         // Update proposal with rating and feedback
-        await MarketplaceRepository.updateProposal(request.selectedProposal, {
+        await marketplaceRepository.updateProposal(selectedProposalId, {
             rating: rating || null,
             feedback: feedback || "",
         });
 
         // Add credits to proposer
+        // proposal.proposerId could be populated
+        const proposerId = proposal.proposerId._id ? proposal.proposerId._id.toString() : proposal.proposerId.toString();
+
         await CreditService.addCredits(
-            proposal.proposerId,
-            proposal.proposedCredits,
+            proposerId,
+            proposal.proposedCredits || request.estimatedCredits, // fallback
             `Travail complété: ${request.title}`,
             requestId,
             proposal._id
         );
 
         // Update request status
-        await MarketplaceRepository.updateRequest(requestId, { status: "completed" });
+        await marketplaceRepository.updateRequest(requestId, { status: "completed" });
 
         return request;
     }
 }
 
 module.exports = new MarketplaceService();
-
