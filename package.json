@@ -18,9 +18,11 @@
     "expo-document-picker": "^14.0.8",
     "expo-image-picker": "^17.0.10",
     "express": "^5.2.1",
+    "firebase": "^12.9.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.1.4",
     "multer": "^2.0.2",
-    "nodemon": "^3.1.11"
+    "nodemon": "^3.1.11",
+    "socket.io": "^4.8.3"
   }
 }

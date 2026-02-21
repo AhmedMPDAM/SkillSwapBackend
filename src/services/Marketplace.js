@@ -1,6 +1,7 @@
 const MarketplaceRepositoryClass = require("../repositories/Marketplace");
 const marketplaceRepository = new MarketplaceRepositoryClass();
 const CreditService = require("./Credit");
+const socketUtil = require("../utils/socket");
 
 class MarketplaceService {
     /**
@@ -304,6 +305,21 @@ class MarketplaceService {
                 requestId,
                 proposal._id
             );
+        }
+
+        // Notify the request owner via Socket.io
+        try {
+            const io = socketUtil.getIo();
+            io.to(requestUserId).emit("notification", {
+                type: "proposal_received",
+                message: `New proposal for your request: ${request.title}`,
+                requestId: requestId,
+                proposalId: proposal._id,
+                proposerId: userId
+            });
+            console.log(`Notification sent to user ${requestUserId}`);
+        } catch (error) {
+            console.error("Socket notification error:", error);
         }
 
         return proposal;
