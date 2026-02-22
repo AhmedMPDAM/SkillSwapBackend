@@ -27,7 +27,9 @@ io.on("connection", (socket) => {
         console.log("Client disconnected:", socket.id);
     });
 });
-
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first');
+dns.setServers(['8.8.8.8', '1.1.1.1']);
 server.listen(PORT, () =>
     console.log(`🚀 Server running on port ${PORT}`)
 );

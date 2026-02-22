@@ -15,6 +15,7 @@ app.use("/api/profile", require("./src/routes/profile"));
 app.use("/api/marketplace", require("./src/routes/marketplace"));
 app.use("/api/admin", require("./src/routes/admin"));
 app.use("/api/categories", require("./src/routes/category"));
+app.use("/api/chat", require("./src/routes/chat"));
 
 // Error handling middleware
 app.use((err, req, res, next) => {

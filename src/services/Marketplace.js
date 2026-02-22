@@ -2,6 +2,7 @@ const MarketplaceRepositoryClass = require("../repositories/Marketplace");
 const marketplaceRepository = new MarketplaceRepositoryClass();
 const CreditService = require("./Credit");
 const socketUtil = require("../utils/socket");
+const ChatService = require("./Chat");
 
 class MarketplaceService {
     /**
@@ -290,7 +291,7 @@ class MarketplaceService {
         // Add proposal to request
         await marketplaceRepository.updateRequestRaw(requestId, { $push: { proposals: proposal._id } });
 
-        // If accept_deal, update request status to in_progress and set selected proposal
+        // If accept_deal, update request status to in_progress, set selected proposal, and open chat
         if (acceptanceType === "accept_deal") {
             await marketplaceRepository.updateRequest(requestId, {
                 status: "in_progress",
@@ -305,18 +306,50 @@ class MarketplaceService {
                 requestId,
                 proposal._id
             );
+
+            // --- Create Firestore chat room ---
+            try {
+                const requestOwner = request.userId;
+                const ownerName = requestOwner.fullName || requestOwner.email || "User";
+                const proposerUser = proposal.proposerId;
+                const proposerName = proposerUser.fullName || proposerUser.email || "User";
+
+                await ChatService.createChatRoom({
+                    proposalId: proposal._id.toString(),
+                    requestId: requestId.toString(),
+                    requestOwnerId: requestUserId,
+                    requestOwnerName: ownerName,
+                    proposerId: userId,
+                    proposerName,
+                    offerExpiresAt: request.desiredDeadline,
+                    requestTitle: request.title,
+                });
+            } catch (chatErr) {
+                console.error("Chat room creation error:", chatErr);
+            }
         }
 
         // Notify the request owner via Socket.io
         try {
             const io = socketUtil.getIo();
+            // Notify request owner about the new proposal
             io.to(requestUserId).emit("notification", {
                 type: "proposal_received",
                 message: `New proposal for your request: ${request.title}`,
                 requestId: requestId,
-                proposalId: proposal._id,
+                proposalId: proposal._id.toString(),
                 proposerId: userId
             });
+            // If instantly accepted, also notify proposer that chat is ready
+            if (acceptanceType === "accept_deal") {
+                io.to(userId).emit("notification", {
+                    type: "chat_ready",
+                    message: `Your proposal was accepted for "${request.title}". Chat is now open!`,
+                    requestId: requestId,
+                    proposalId: proposal._id.toString(),
+                    chatId: proposal._id.toString(),
+                });
+            }
             console.log(`Notification sent to user ${requestUserId}`);
         } catch (error) {
             console.error("Socket notification error:", error);
@@ -416,11 +449,47 @@ class MarketplaceService {
         // Deduct credits from request owner
         await CreditService.deductCredits(
             userId,
-            acceptedProposal.proposedCredits || 0, // Fallback if proposedCredits missing?
+            acceptedProposal.proposedCredits || 0,
             `Acceptation de proposition pour: ${request.title}`,
             requestId,
             proposalId
         );
+
+        // --- Create Firestore chat room ---
+        const proposalProposerId = (
+            proposal.proposerId._id || proposal.proposerId
+        ).toString();
+        try {
+            const ownerName = request.userId.fullName || request.userId.email || "User";
+            const proposerName = proposal.proposerId.fullName || proposal.proposerId.email || "User";
+
+            await ChatService.createChatRoom({
+                proposalId: proposalId.toString(),
+                requestId: requestId.toString(),
+                requestOwnerId: requestUserId,
+                requestOwnerName: ownerName,
+                proposerId: proposalProposerId,
+                proposerName,
+                offerExpiresAt: request.desiredDeadline,
+                requestTitle: request.title,
+            });
+        } catch (chatErr) {
+            console.error("Chat room creation error during acceptProposal:", chatErr);
+        }
+
+        // Notify proposer that their proposal was accepted and chat is ready
+        try {
+            const io = socketUtil.getIo();
+            io.to(proposalProposerId).emit("notification", {
+                type: "chat_ready",
+                message: `Your proposal was accepted for "${request.title}". Chat is now open!`,
+                requestId: requestId.toString(),
+                proposalId: proposalId.toString(),
+                chatId: proposalId.toString(),
+            });
+        } catch (sockErr) {
+            console.error("Socket notification error in acceptProposal:", sockErr);
+        }
 
         return acceptedProposal;
     }
