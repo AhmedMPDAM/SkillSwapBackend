@@ -26,11 +26,11 @@ const exchangeProposalSchema = new mongoose.Schema(
         },
         admin_quantification_cost: {
             type: Number,
-            default: 0, // Will be 4 if admin_quantification is chosen
+            default: 0,
         },
         status: {
             type: String,
-            enum: ["pending", "accepted", "rejected", "cancelled", "admin_processing"],
+            enum: ["pending", "accepted", "rejected", "cancelled", "admin_processing", "examiner_approved"],
             default: "pending",
             index: true,
         },
@@ -44,6 +44,28 @@ const exchangeProposalSchema = new mongoose.Schema(
             type: String,
             default: "",
         },
+        // ── Examiner review fields ──────────────────────────────────────────
+        examinerReview: {
+            examinerId: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "User",
+                default: null,
+            },
+            // Credits the examiner sets (overrides estimated if provided)
+            assignedCredits: {
+                type: Number,
+                default: null,
+            },
+            // The examiner's covering letter / note to the proposer
+            examinerNote: {
+                type: String,
+                default: "",
+            },
+            reviewedAt: {
+                type: Date,
+                default: null,
+            },
+        },
     },
     { timestamps: true }
 );
@@ -53,4 +75,3 @@ exchangeProposalSchema.index({ exchangeRequestId: 1, status: 1 });
 exchangeProposalSchema.index({ proposerId: 1, status: 1 });
 
 module.exports = mongoose.model("ExchangeProposal", exchangeProposalSchema);
-

@@ -31,7 +31,7 @@ const userSchema = new mongoose.Schema(
         },
         certificates: [certificateSchema],
         credits: { type: Number, default: 5, min: 0 }, // 5 crédits de démarrage
-        role: { type: String, enum: ["user", "admin"], default: "user" },
+        role: { type: String, enum: ["user", "admin", "examiner"], default: "user" },
     },
     { timestamps: true }
 );
