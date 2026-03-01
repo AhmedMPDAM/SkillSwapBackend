@@ -142,17 +142,38 @@ class AdminController {
                 $set: { status: "in_progress", selectedProposal: id },
             });
 
-            // Deduct credits from request owner
+            // ── ESCROW ADJUSTMENT: examiner may have changed the credit amount ──
+            // The owner already paid estimatedCredits into escrow at posting time.
+            // We only charge/refund the DIFFERENCE here.
+            const lockedCredits = request.lockedCredits || request.estimatedCredits || 0;
+            const creditDiff = finalCredits - lockedCredits;
+
             try {
-                await CreditService.deductCredits(
-                    requestUserId,
-                    finalCredits,
-                    `Examinateur a approuvé la proposition pour: "${request.title}"`,
-                    requestId,
-                    id
-                );
+                if (creditDiff > 0) {
+                    // Examiner raised credits — charge the extra from the owner
+                    await CreditService.deductCredits(
+                        requestUserId,
+                        creditDiff,
+                        `Ajustement examinateur (supplément) pour: "${request.title}"`,
+                        requestId,
+                        id
+                    );
+                } else if (creditDiff < 0) {
+                    // Examiner reduced credits — refund the difference to the owner
+                    await CreditService.addCredits(
+                        requestUserId,
+                        Math.abs(creditDiff),
+                        `Ajustement examinateur (remboursement partiel) pour: "${request.title}"`,
+                        requestId,
+                        id
+                    );
+                }
+                // Update the locked amount so completeExchange pays the right figure
+                await ExchangeRequest.findByIdAndUpdate(requestId, {
+                    $set: { lockedCredits: finalCredits },
+                });
             } catch (creditErr) {
-                console.error("Credit deduction error:", creditErr.message);
+                console.error("Credit adjustment error:", creditErr.message);
             }
 
             // Create Firestore chat room

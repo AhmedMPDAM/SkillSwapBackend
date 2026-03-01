@@ -1,6 +1,8 @@
 const MarketplaceRepositoryClass = require("../repositories/Marketplace");
 const marketplaceRepository = new MarketplaceRepositoryClass();
 const CreditService = require("./Credit");
+const UserRepositoryClass = require("../repositories/Auth");
+const userRepository = new UserRepositoryClass();
 const socketUtil = require("../utils/socket");
 const ChatService = require("./Chat");
 
@@ -33,13 +35,21 @@ class MarketplaceService {
             throw new Error("Deadline must be in the future");
         }
 
-        // Calculate estimated credits
+        // Calculate how many credits this request costs
         const estimatedCredits = CreditService.calculateCredits(
             estimatedDuration,
             complexity || "moyen"
         );
 
-        // Create request
+        // ── ESCROW CHECK: owner must have enough credits before posting ──────
+        const user = await userRepository.findById(userId);
+        if (!user || (user.credits || 0) < estimatedCredits) {
+            throw new Error(
+                `Insufficient credits. You need ${estimatedCredits} credits to post this request (you have ${user ? user.credits || 0 : 0}).`
+            );
+        }
+
+        // Create request first so we have its ID for the credit history entry
         const request = await marketplaceRepository.createRequest({
             userId,
             title,
@@ -51,10 +61,26 @@ class MarketplaceService {
             estimatedDuration,
             desiredDeadline: new Date(desiredDeadline),
             estimatedCredits,
+            lockedCredits: estimatedCredits, // will be paid to proposer on completion
             complexity: complexity || "moyen",
             location: location || "",
             status: "open",
         });
+
+        // ── ESCROW DEDUCTION: lock credits now — they leave the owner's wallet ─
+        try {
+            await CreditService.deductCredits(
+                userId,
+                estimatedCredits,
+                `Credits mis en séquestre pour: "${title}"`,
+                request._id,
+                null
+            );
+        } catch (deductErr) {
+            // Roll back the request if escrow deduction fails
+            await marketplaceRepository.deleteRequest(request._id);
+            throw deductErr;
+        }
 
         return request;
     }
@@ -218,6 +244,21 @@ class MarketplaceService {
             throw new Error("Unauthorized: You can only delete your own requests");
         }
 
+        // ── ESCROW REFUND: return locked credits to owner when request is deleted ─
+        if (request.lockedCredits && request.lockedCredits > 0) {
+            try {
+                await CreditService.addCredits(
+                    requestUserId,
+                    request.lockedCredits,
+                    `Remboursement séquestre - demande supprimée: "${request.title}"`,
+                    requestId,
+                    null
+                );
+            } catch (refundErr) {
+                console.error("Credit refund error on delete:", refundErr.message);
+            }
+        }
+
         return marketplaceRepository.deleteRequest(requestId);
     }
 
@@ -298,14 +339,7 @@ class MarketplaceService {
                 selectedProposal: proposal._id,
             });
 
-            // Deduct estimated credits from request owner
-            await CreditService.deductCredits(
-                requestUserId,
-                request.estimatedCredits,
-                `Acceptation immédiate de proposition pour: ${request.title}`,
-                requestId,
-                proposal._id
-            );
+            // Credits were already locked in escrow at posting time — nothing to deduct here
 
             // --- Create Firestore chat room ---
             try {
@@ -446,14 +480,7 @@ class MarketplaceService {
             selectedProposal: proposalId,
         });
 
-        // Deduct credits from request owner
-        await CreditService.deductCredits(
-            userId,
-            acceptedProposal.proposedCredits || 0,
-            `Acceptation de proposition pour: ${request.title}`,
-            requestId,
-            proposalId
-        );
+        // Credits were already locked in escrow at posting time — nothing to deduct here
 
         // --- Create Firestore chat room ---
         const proposalProposerId = (
@@ -540,9 +567,40 @@ class MarketplaceService {
             throw new Error("No selected proposal found");
         }
 
-        const selectedProposalId = request.selectedProposal._id ? request.selectedProposal._id.toString() : request.selectedProposal.toString();
+        const selectedProposalId = request.selectedProposal._id
+            ? request.selectedProposal._id.toString()
+            : request.selectedProposal.toString();
+
+        console.log(`[completeExchange] selectedProposalId = ${selectedProposalId}`);
 
         const proposal = await marketplaceRepository.getProposalById(selectedProposalId);
+
+        if (!proposal) {
+            throw new Error(`Proposal not found for id: ${selectedProposalId}`);
+        }
+
+        // ── ESCROW RELEASE: pay the locked credits to the proposer on completion ─
+        const proposerId = proposal.proposerId._id
+            ? proposal.proposerId._id.toString()
+            : proposal.proposerId.toString();
+
+        const payoutAmount = request.lockedCredits || request.estimatedCredits; // fallback for old requests
+
+        console.log(`[completeExchange] Paying ${payoutAmount} credits to proposer ${proposerId} for request "${request.title}"`);
+
+        try {
+            await CreditService.addCredits(
+                proposerId,
+                payoutAmount,
+                `Travail complété - paiement séquestre: "${request.title}"`,
+                requestId,
+                proposal._id
+            );
+            console.log(`[completeExchange] Credit transfer SUCCESS — ${payoutAmount} credits sent to ${proposerId}`);
+        } catch (creditErr) {
+            console.error(`[completeExchange] Credit transfer FAILED for proposer ${proposerId}:`, creditErr.message);
+            throw new Error(`Failed to transfer credits to proposer: ${creditErr.message}`);
+        }
 
         // Update proposal with rating and feedback
         await marketplaceRepository.updateProposal(selectedProposalId, {
@@ -550,20 +608,15 @@ class MarketplaceService {
             feedback: feedback || "",
         });
 
-        // Add credits to proposer
-        // proposal.proposerId could be populated
-        const proposerId = proposal.proposerId._id ? proposal.proposerId._id.toString() : proposal.proposerId.toString();
-
-        await CreditService.addCredits(
-            proposerId,
-            proposal.proposedCredits || request.estimatedCredits, // fallback
-            `Travail complété: ${request.title}`,
-            requestId,
-            proposal._id
-        );
-
-        // Update request status
+        // Update request status — only after successful credit transfer
         await marketplaceRepository.updateRequest(requestId, { status: "completed" });
+
+        // Close the Firestore chat room
+        try {
+            await ChatService.disableChat(selectedProposalId);
+        } catch (chatErr) {
+            console.error("[completeExchange] Failed to close chat room:", chatErr.message);
+        }
 
         return request;
     }

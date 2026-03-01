@@ -57,6 +57,12 @@ const exchangeRequestSchema = new mongoose.Schema(
             required: true,
             min: 0,
         },
+        // Credits actually locked in escrow (deducted from owner at posting, paid to proposer at completion)
+        lockedCredits: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
         complexity: {
             type: String,
             enum: ["simple", "moyen", "complexe", "tres_complexe"],
