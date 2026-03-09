@@ -5,55 +5,62 @@ const socketUtil = require("../utils/socket");
 
 class SubmissionService {
     /**
-     * Submit work for an exchange (by proposer)
-     * Creates a new submission with the uploaded file.
+     * Resolve both participant IDs and the caller's role for a given request.
      */
-    async submitWork(proposerId, requestId, proposalId, fileData, message) {
-        // Validate the request exists and is in_progress
+    async _resolveParticipants(requestId, userId) {
         const request = await marketplaceRepository.getRequestById(requestId);
-        if (!request) {
-            throw new Error("Request not found");
-        }
-
-        if (request.status !== "in_progress") {
+        if (!request) throw new Error("Request not found");
+        if (request.status !== "in_progress")
             throw new Error("Only in-progress requests can receive submissions");
-        }
 
-        // Validate the proposal exists and belongs to this request
-        const proposal = await marketplaceRepository.getProposalById(proposalId);
-        if (!proposal) {
-            throw new Error("Proposal not found");
-        }
+        const ownerId = request.userId._id
+            ? request.userId._id.toString()
+            : request.userId.toString();
 
-        const proposalProposerId = proposal.proposerId._id
+        if (!request.selectedProposal)
+            throw new Error("No selected proposal found");
+
+        const proposal = await marketplaceRepository.getProposalById(
+            request.selectedProposal._id
+                ? request.selectedProposal._id.toString()
+                : request.selectedProposal.toString()
+        );
+        if (!proposal) throw new Error("Proposal not found");
+
+        const proposerId = proposal.proposerId._id
             ? proposal.proposerId._id.toString()
             : proposal.proposerId.toString();
 
-        if (proposalProposerId !== proposerId) {
-            throw new Error("Unauthorized: Only the proposer can submit work");
-        }
+        let role = null;
+        if (userId === ownerId) role = "owner";
+        else if (userId === proposerId) role = "proposer";
+        else throw new Error("Unauthorized: You are not a participant");
 
-        // Check that this is the selected proposal
-        const selectedProposalId = request.selectedProposal._id
-            ? request.selectedProposal._id.toString()
-            : request.selectedProposal.toString();
+        const otherUserId = role === "owner" ? proposerId : ownerId;
 
-        if (selectedProposalId !== proposalId) {
-            throw new Error("This proposal is not the selected one for this request");
-        }
+        return { request, proposal, ownerId, proposerId, role, otherUserId };
+    }
 
-        // Count existing submissions to determine revision number
+    /**
+     * Submit work (either side can submit).
+     */
+    async submitWork(userId, requestId, proposalId, fileData, message) {
+        const { request, role, otherUserId } =
+            await this._resolveParticipants(requestId, userId);
+
+        // Count existing submissions for THIS role to determine revision number
         const existingCount = await Submission.countDocuments({
             exchangeRequestId: requestId,
-            proposalId: proposalId,
+            role,
         });
 
         const submission = await Submission.create({
             exchangeRequestId: requestId,
-            proposalId: proposalId,
-            submitterId: proposerId,
+            proposalId,
+            submitterId: userId,
+            role,
             fileName: fileData.originalname,
-            filePath: fileData.filename, // stored filename on disk
+            filePath: fileData.filename,
             fileSize: fileData.size,
             fileMimeType: fileData.mimetype,
             message: message || "",
@@ -61,18 +68,13 @@ class SubmissionService {
             revisionNumber: existingCount + 1,
         });
 
-        // Notify request owner
+        // Notify the other party
         try {
-            const requestUserId = request.userId._id
-                ? request.userId._id.toString()
-                : request.userId.toString();
-
             const io = socketUtil.getIo();
-            io.to(requestUserId).emit("notification", {
+            io.to(otherUserId).emit("notification", {
                 type: "work_submitted",
-                message: `Work has been submitted for "${request.title}" (revision #${submission.revisionNumber})`,
+                message: `Work submitted for "${request.title}" (revision #${submission.revisionNumber})`,
                 requestId,
-                proposalId,
                 submissionId: submission._id.toString(),
             });
         } catch (err) {
@@ -83,21 +85,17 @@ class SubmissionService {
     }
 
     /**
-     * Get all submissions for an exchange
+     * Get all submissions for an exchange (both sides visible to both).
      */
     async getSubmissions(requestId, userId) {
         const request = await marketplaceRepository.getRequestById(requestId);
-        if (!request) {
-            throw new Error("Request not found");
-        }
+        if (!request) throw new Error("Request not found");
 
-        // Both the request owner and the proposer can view submissions
-        const requestUserId = request.userId._id
+        const ownerId = request.userId._id
             ? request.userId._id.toString()
             : request.userId.toString();
 
-        let isParticipant = requestUserId === userId;
-
+        let isParticipant = ownerId === userId;
         if (!isParticipant && request.selectedProposal) {
             const proposal = await marketplaceRepository.getProposalById(
                 request.selectedProposal._id
@@ -105,16 +103,14 @@ class SubmissionService {
                     : request.selectedProposal.toString()
             );
             if (proposal) {
-                const proposerIdStr = proposal.proposerId._id
+                const pid = proposal.proposerId._id
                     ? proposal.proposerId._id.toString()
                     : proposal.proposerId.toString();
-                isParticipant = proposerIdStr === userId;
+                isParticipant = pid === userId;
             }
         }
-
-        if (!isParticipant) {
+        if (!isParticipant)
             throw new Error("Unauthorized: Only exchange participants can view submissions");
-        }
 
         return Submission.find({ exchangeRequestId: requestId })
             .populate("submitterId", "fullName profileImage")
@@ -123,43 +119,28 @@ class SubmissionService {
     }
 
     /**
-     * Request revision on a submission (by request owner)
+     * Request revision — the OTHER party reviews a submission.
+     * The reviewer must NOT be the same person who submitted.
      */
     async requestRevision(submissionId, userId, revisionNotes) {
-        const submission = await Submission.findById(submissionId)
-            .populate("exchangeRequestId")
-            .lean();
-
-        if (!submission) {
-            throw new Error("Submission not found");
-        }
-
-        if (submission.status !== "pending_review") {
+        const submission = await Submission.findById(submissionId).lean();
+        if (!submission) throw new Error("Submission not found");
+        if (submission.status !== "pending_review")
             throw new Error("This submission has already been reviewed");
-        }
 
-        // Verify user is the request owner
-        const request = await marketplaceRepository.getRequestById(
-            submission.exchangeRequestId._id
-                ? submission.exchangeRequestId._id.toString()
-                : submission.exchangeRequestId.toString()
-        );
+        // The reviewer must be the OTHER participant (not the submitter)
+        if (submission.submitterId.toString() === userId)
+            throw new Error("You cannot review your own submission");
 
-        if (!request) {
-            throw new Error("Associated request not found");
-        }
+        const requestId = submission.exchangeRequestId._id
+            ? submission.exchangeRequestId._id.toString()
+            : submission.exchangeRequestId.toString();
 
-        const requestUserId = request.userId._id
-            ? request.userId._id.toString()
-            : request.userId.toString();
+        // Verify the reviewer is a participant
+        await this._resolveParticipants(requestId, userId);
 
-        if (requestUserId !== userId) {
-            throw new Error("Unauthorized: Only the request owner can request revisions");
-        }
-
-        if (!revisionNotes || !revisionNotes.trim()) {
-            throw new Error("Revision notes are required when requesting modifications");
-        }
+        if (!revisionNotes || !revisionNotes.trim())
+            throw new Error("Revision notes are required");
 
         const updated = await Submission.findByIdAndUpdate(
             submissionId,
@@ -173,14 +154,15 @@ class SubmissionService {
             { new: true }
         ).lean();
 
-        // Notify the proposer
+        // Notify the submitter
         try {
+            const request = await marketplaceRepository.getRequestById(requestId);
             const io = socketUtil.getIo();
             io.to(submission.submitterId.toString()).emit("notification", {
                 type: "revision_requested",
                 message: `Modifications requested for "${request.title}": ${revisionNotes}`,
-                requestId: request._id.toString(),
-                submissionId: submissionId,
+                requestId,
+                submissionId,
             });
         } catch (err) {
             console.error("Socket notification error (requestRevision):", err);
@@ -190,59 +172,39 @@ class SubmissionService {
     }
 
     /**
-     * Approve a submission (by request owner)
-     * This triggers completeExchange to release credits
+     * Approve a submission — the OTHER party approves.
+     * Does NOT auto-complete the exchange (credits handled separately).
      */
     async approveSubmission(submissionId, userId) {
         const submission = await Submission.findById(submissionId).lean();
-
-        if (!submission) {
-            throw new Error("Submission not found");
-        }
-
-        if (submission.status !== "pending_review") {
+        if (!submission) throw new Error("Submission not found");
+        if (submission.status !== "pending_review")
             throw new Error("This submission has already been reviewed");
-        }
 
-        // Verify user is the request owner
+        if (submission.submitterId.toString() === userId)
+            throw new Error("You cannot approve your own submission");
+
         const requestId = submission.exchangeRequestId._id
             ? submission.exchangeRequestId._id.toString()
             : submission.exchangeRequestId.toString();
 
-        const request = await marketplaceRepository.getRequestById(requestId);
+        await this._resolveParticipants(requestId, userId);
 
-        if (!request) {
-            throw new Error("Associated request not found");
-        }
-
-        const requestUserId = request.userId._id
-            ? request.userId._id.toString()
-            : request.userId.toString();
-
-        if (requestUserId !== userId) {
-            throw new Error("Unauthorized: Only the request owner can approve submissions");
-        }
-
-        // Mark submission as approved
         const updated = await Submission.findByIdAndUpdate(
             submissionId,
-            {
-                $set: {
-                    status: "approved",
-                    reviewedAt: new Date(),
-                },
-            },
+            { $set: { status: "approved", reviewedAt: new Date() } },
             { new: true }
         ).lean();
 
-        // Notify the proposer
+        // Notify the submitter
         try {
+            const request = await marketplaceRepository.getRequestById(requestId);
             const io = socketUtil.getIo();
             io.to(submission.submitterId.toString()).emit("notification", {
                 type: "submission_approved",
-                message: `Your work for "${request.title}" has been approved! Credits are being transferred.`,
-                requestId: requestId,
-                submissionId: submissionId,
+                message: `Your work for "${request.title}" has been approved!`,
+                requestId,
+                submissionId,
             });
         } catch (err) {
             console.error("Socket notification error (approveSubmission):", err);
@@ -252,13 +214,26 @@ class SubmissionService {
     }
 
     /**
-     * Get the latest submission for an exchange (useful for chat UI)
+     * Check if both sides have at least one approved submission.
      */
-    async getLatestSubmission(requestId) {
-        return Submission.findOne({ exchangeRequestId: requestId })
-            .populate("submitterId", "fullName profileImage")
-            .sort({ createdAt: -1 })
-            .lean();
+    async checkBothApproved(requestId) {
+        const ownerApproved = await Submission.findOne({
+            exchangeRequestId: requestId,
+            role: "owner",
+            status: "approved",
+        }).lean();
+
+        const proposerApproved = await Submission.findOne({
+            exchangeRequestId: requestId,
+            role: "proposer",
+            status: "approved",
+        }).lean();
+
+        return {
+            ownerApproved: !!ownerApproved,
+            proposerApproved: !!proposerApproved,
+            bothApproved: !!ownerApproved && !!proposerApproved,
+        };
     }
 }
 

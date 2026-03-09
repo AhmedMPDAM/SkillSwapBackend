@@ -1,11 +1,9 @@
 const SubmissionService = require("../services/Submission");
-const MarketplaceService = require("../services/Marketplace");
 
 class SubmissionController {
     /**
-     * Submit work for an exchange
+     * Submit work for an exchange (either party)
      * POST /api/marketplace/requests/:id/submissions
-     * Body: file (multipart), message, proposalId
      */
     async submitWork(req, res, next) {
         try {
@@ -14,7 +12,6 @@ class SubmissionController {
             if (!proposalId) {
                 return res.status(400).json({ message: "proposalId is required" });
             }
-
             if (!req.file) {
                 return res.status(400).json({ message: "A file is required for submission" });
             }
@@ -27,10 +24,7 @@ class SubmissionController {
                 message
             );
 
-            res.status(201).json({
-                message: "Work submitted successfully",
-                submission,
-            });
+            res.status(201).json({ message: "Work submitted successfully", submission });
         } catch (error) {
             next(error);
         }
@@ -46,8 +40,10 @@ class SubmissionController {
                 req.params.id,
                 req.user.id
             );
+            // Also return approval status
+            const approvalStatus = await SubmissionService.checkBothApproved(req.params.id);
 
-            res.status(200).json({ submissions });
+            res.status(200).json({ submissions, approvalStatus });
         } catch (error) {
             next(error);
         }
@@ -56,16 +52,12 @@ class SubmissionController {
     /**
      * Request revision on a submission
      * POST /api/marketplace/submissions/:id/request-revision
-     * Body: revisionNotes
      */
     async requestRevision(req, res, next) {
         try {
             const { revisionNotes } = req.body;
-
             if (!revisionNotes || !revisionNotes.trim()) {
-                return res.status(400).json({
-                    message: "Revision notes are required",
-                });
+                return res.status(400).json({ message: "Revision notes are required" });
             }
 
             const submission = await SubmissionService.requestRevision(
@@ -74,41 +66,32 @@ class SubmissionController {
                 revisionNotes
             );
 
-            res.status(200).json({
-                message: "Revision requested successfully",
-                submission,
-            });
+            res.status(200).json({ message: "Revision requested successfully", submission });
         } catch (error) {
             next(error);
         }
     }
 
     /**
-     * Approve a submission and complete the exchange
+     * Approve a submission (does NOT auto-complete — waits for both sides)
      * POST /api/marketplace/submissions/:id/approve
-     * Body: rating (optional), feedback (optional)
      */
     async approveSubmission(req, res, next) {
         try {
-            const { rating, feedback } = req.body;
-
             const result = await SubmissionService.approveSubmission(
                 req.params.id,
                 req.user.id
             );
 
-            // Now trigger the exchange completion (credit transfer)
-            const request = await MarketplaceService.completeExchange(
-                result.requestId,
-                req.user.id,
-                rating,
-                feedback
-            );
+            // Check if both sides are now approved
+            const approvalStatus = await SubmissionService.checkBothApproved(result.requestId);
 
             res.status(200).json({
-                message: "Submission approved and exchange completed successfully",
+                message: approvalStatus.bothApproved
+                    ? "Both sides approved! Exchange is ready for completion."
+                    : "Submission approved. Waiting for the other side.",
                 submission: result.submission,
-                request,
+                approvalStatus,
             });
         } catch (error) {
             next(error);

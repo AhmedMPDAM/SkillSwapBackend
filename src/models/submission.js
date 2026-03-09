@@ -20,6 +20,13 @@ const submissionSchema = new mongoose.Schema(
             required: true,
             index: true,
         },
+        // Which side of the exchange submitted: "owner" or "proposer"
+        role: {
+            type: String,
+            enum: ["owner", "proposer"],
+            required: true,
+            index: true,
+        },
         // File information
         fileName: {
             type: String,
@@ -51,7 +58,7 @@ const submissionSchema = new mongoose.Schema(
             default: "pending_review",
             index: true,
         },
-        // Revision notes from the request owner (when asking for modifications)
+        // Revision notes from the reviewer (when asking for modifications)
         revisionNotes: {
             type: String,
             default: "",
@@ -72,7 +79,7 @@ const submissionSchema = new mongoose.Schema(
 );
 
 // Indexes for efficient queries
-submissionSchema.index({ exchangeRequestId: 1, createdAt: -1 });
-submissionSchema.index({ proposalId: 1, status: 1 });
+submissionSchema.index({ exchangeRequestId: 1, role: 1, createdAt: -1 });
+submissionSchema.index({ proposalId: 1, role: 1, status: 1 });
 
 module.exports = mongoose.model("Submission", submissionSchema);
