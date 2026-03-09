@@ -2,6 +2,7 @@ const express = require("express");
 const multer = require("multer");
 const path = require("path");
 const ProfileController = require("../controller/Profile");
+const RatingController = require("../controller/Rating");
 const authenticateToken = require("../middleware/auth");
 
 const router = express.Router();
@@ -80,4 +81,20 @@ router.put("/certificates/:certificateId", authenticateToken, upload.single("doc
 // Delete certificate
 router.delete("/certificates/:certificateId", authenticateToken, ProfileController.deleteCertificate);
 
+// ── Stats & Reputation ──────────────────────────────────────────────────────
+// Get own stats (avg rating, badges, completed exchanges)
+router.get("/stats", authenticateToken, RatingController.getMyStats);
+
+// Credit history
+router.get("/credits/history", authenticateToken, RatingController.getCreditHistory);
+
+// Ratings
+router.get("/ratings/received", authenticateToken, RatingController.getReceivedRatings);
+router.get("/ratings/given", authenticateToken, RatingController.getGivenRatings);
+router.post("/ratings", authenticateToken, RatingController.createRating);
+
+// Public profile (view another user's profile with stats, ratings, badges)
+router.get("/:userId/public", authenticateToken, RatingController.getPublicProfile);
+
 module.exports = router;
+
