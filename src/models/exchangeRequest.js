@@ -65,9 +65,9 @@ const exchangeRequestSchema = new mongoose.Schema(
         },
         complexity: {
             type: String,
-            enum: ["simple", "moyen", "complexe", "tres_complexe"],
+            enum: ["simple", "medium", "advanced", "expert"],
             required: true,
-            default: "moyen",
+            default: "medium",
         },
         location: {
             type: String,

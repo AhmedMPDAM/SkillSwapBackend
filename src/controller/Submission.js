@@ -1,4 +1,5 @@
 const SubmissionService = require("../services/Submission");
+const MarketplaceService = require("../services/Marketplace");
 
 class SubmissionController {
     /**
@@ -73,7 +74,7 @@ class SubmissionController {
     }
 
     /**
-     * Approve a submission (does NOT auto-complete — waits for both sides)
+     * Approve a submission — when both sides have approved, auto-complete the exchange.
      * POST /api/marketplace/submissions/:id/approve
      */
     async approveSubmission(req, res, next) {
@@ -86,9 +87,20 @@ class SubmissionController {
             // Check if both sides are now approved
             const approvalStatus = await SubmissionService.checkBothApproved(result.requestId);
 
+            // ── Auto-complete exchange when both sides approved ──────────────
+            if (approvalStatus.bothApproved) {
+                try {
+                    await MarketplaceService.completeExchangeInternal(result.requestId);
+                    console.log(`[approveSubmission] Exchange auto-completed for request ${result.requestId}`);
+                } catch (completeErr) {
+                    console.error(`[approveSubmission] Auto-complete failed:`, completeErr.message);
+                    // Still return success for the approval itself
+                }
+            }
+
             res.status(200).json({
                 message: approvalStatus.bothApproved
-                    ? "Both sides approved! Exchange is ready for completion."
+                    ? "Both sides approved! Exchange completed — credits released."
                     : "Submission approved. Waiting for the other side.",
                 submission: result.submission,
                 approvalStatus,

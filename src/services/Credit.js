@@ -8,21 +8,21 @@ class CreditService {
      * Calculate credits based on estimated hours and complexity
      * Formula: Crédits = Heures estimées × Multiplicateur de complexité
      * 
-     * Multiplicateurs:
+     * Multipliers:
      * - Simple: 1x
-     * - Moyen: 1.5x
-     * - Complexe: 2x
-     * - Très complexe: 2.5x
+     * - Medium: 1.5x
+     * - Advanced: 2x
+     * - Expert: 2.5x
      */
     calculateCredits(estimatedHours, complexity) {
         const multipliers = {
             simple: 1,
-            moyen: 1.5,
-            complexe: 2,
-            tres_complexe: 2.5,
+            medium: 1.5,
+            advanced: 2,
+            expert: 2.5,
         };
 
-        const multiplier = multipliers[complexity] || multipliers.moyen;
+        const multiplier = multipliers[complexity] || multipliers.medium;
         const credits = Math.round(estimatedHours * multiplier * 10) / 10; // Round to 1 decimal
 
         return credits;

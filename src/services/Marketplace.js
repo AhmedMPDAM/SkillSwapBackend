@@ -38,7 +38,7 @@ class MarketplaceService {
         // Calculate how many credits this request costs
         const estimatedCredits = CreditService.calculateCredits(
             estimatedDuration,
-            complexity || "moyen"
+            complexity || "medium"
         );
 
         // ── ESCROW CHECK: owner must have enough credits before posting ──────
@@ -62,7 +62,7 @@ class MarketplaceService {
             desiredDeadline: new Date(desiredDeadline),
             estimatedCredits,
             lockedCredits: estimatedCredits, // will be paid to proposer on completion
-            complexity: complexity || "moyen",
+            complexity: complexity || "medium",
             location: location || "",
             status: "open",
         });
@@ -618,6 +618,80 @@ class MarketplaceService {
             console.error("[completeExchange] Failed to close chat room:", chatErr.message);
         }
 
+        return request;
+    }
+
+    /**
+     * Internal: Complete an exchange when both sides have approved.
+     * No user-auth check — called by the system, not by a user.
+     */
+    async completeExchangeInternal(requestId) {
+        const request = await marketplaceRepository.getRequestById(requestId);
+
+        if (!request) {
+            throw new Error("Request not found");
+        }
+
+        // Prevent double-completion
+        if (request.status === "completed") {
+            console.log(`[completeExchangeInternal] Request ${requestId} already completed, skipping.`);
+            return request;
+        }
+
+        if (request.status !== "in_progress") {
+            throw new Error("Only in-progress requests can be completed");
+        }
+
+        if (!request.selectedProposal) {
+            throw new Error("No selected proposal found");
+        }
+
+        const selectedProposalId = request.selectedProposal._id
+            ? request.selectedProposal._id.toString()
+            : request.selectedProposal.toString();
+
+        console.log(`[completeExchangeInternal] selectedProposalId = ${selectedProposalId}`);
+
+        const proposal = await marketplaceRepository.getProposalById(selectedProposalId);
+
+        if (!proposal) {
+            throw new Error(`Proposal not found for id: ${selectedProposalId}`);
+        }
+
+        // ── ESCROW RELEASE: pay the locked credits to the proposer ─
+        const proposerId = proposal.proposerId._id
+            ? proposal.proposerId._id.toString()
+            : proposal.proposerId.toString();
+
+        const payoutAmount = request.lockedCredits || request.estimatedCredits;
+
+        console.log(`[completeExchangeInternal] Paying ${payoutAmount} credits to proposer ${proposerId} for request "${request.title}"`);
+
+        try {
+            await CreditService.addCredits(
+                proposerId,
+                payoutAmount,
+                `Travail complété - paiement séquestre: "${request.title}"`,
+                requestId,
+                proposal._id
+            );
+            console.log(`[completeExchangeInternal] Credit transfer SUCCESS — ${payoutAmount} credits sent to ${proposerId}`);
+        } catch (creditErr) {
+            console.error(`[completeExchangeInternal] Credit transfer FAILED for proposer ${proposerId}:`, creditErr.message);
+            throw new Error(`Failed to transfer credits to proposer: ${creditErr.message}`);
+        }
+
+        // Update request status — only after successful credit transfer
+        await marketplaceRepository.updateRequest(requestId, { status: "completed" });
+
+        // Close the Firestore chat room
+        try {
+            await ChatService.disableChat(selectedProposalId);
+        } catch (chatErr) {
+            console.error("[completeExchangeInternal] Failed to close chat room:", chatErr.message);
+        }
+
+        console.log(`[completeExchangeInternal] Exchange completed for request ${requestId}`);
         return request;
     }
 }
