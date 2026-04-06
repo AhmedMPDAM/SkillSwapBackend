@@ -1,6 +1,8 @@
 const User = require("../models/user");
 const ExchangeRequest = require("../models/exchangeRequest");
 const ExchangeProposal = require("../models/exchangeProposal");
+const Rating = require("../models/rating");
+const CreditHistory = require("../models/creditHistory");
 const socketUtil = require("../utils/socket");
 const CreditService = require("../services/Credit");
 const ChatService = require("../services/Chat");
@@ -15,13 +17,265 @@ class AdminController {
             ]);
             const totalCredits = credits.length > 0 ? credits[0].total : 0;
             const requests = await ExchangeRequest.countDocuments();
+            const completedExchanges = await ExchangeRequest.countDocuments({ status: "completed" });
             const pendingExaminations = await ExchangeProposal.countDocuments({ status: "admin_processing" });
 
             res.status(200).json({
                 users,
                 totalCredits,
                 requests,
+                completedExchanges,
                 pendingExaminations,
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // ── User Management ──────────────────────────────────────────────────────
+    /**
+     * GET /api/admin/users
+     * List all users with pagination, search, and role filtering
+     */
+    async getAllUsers(req, res, next) {
+        try {
+            const { page = 1, limit = 20, search, role } = req.query;
+            const skip = (parseInt(page) - 1) * parseInt(limit);
+
+            const query = {};
+
+            // Search by name or email
+            if (search) {
+                query.$or = [
+                    { fullName: { $regex: search, $options: "i" } },
+                    { email: { $regex: search, $options: "i" } },
+                ];
+            }
+
+            // Filter by role
+            if (role && ["user", "admin", "examiner"].includes(role)) {
+                query.role = role;
+            }
+
+            const users = await User.find(query)
+                .select("fullName email profileImage role credits skills location createdAt")
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(parseInt(limit))
+                .lean();
+
+            const total = await User.countDocuments(query);
+
+            // Enrich with exchange counts
+            const enrichedUsers = await Promise.all(
+                users.map(async (user) => {
+                    const requestsCount = await ExchangeRequest.countDocuments({ userId: user._id });
+                    const proposalsCount = await ExchangeProposal.countDocuments({ proposerId: user._id });
+                    const completedCount = await ExchangeRequest.countDocuments({ userId: user._id, status: "completed" });
+
+                    return {
+                        ...user,
+                        requestsCount,
+                        proposalsCount,
+                        completedCount,
+                    };
+                })
+            );
+
+            res.status(200).json({
+                users: enrichedUsers,
+                pagination: {
+                    page: parseInt(page),
+                    limit: parseInt(limit),
+                    total,
+                    pages: Math.ceil(total / parseInt(limit)),
+                },
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * GET /api/admin/users/:id
+     * Get full details for a single user
+     */
+    async getUserDetails(req, res, next) {
+        try {
+            const { id } = req.params;
+
+            const user = await User.findById(id)
+                .select("-password")
+                .lean();
+
+            if (!user) {
+                return res.status(404).json({ message: "User not found" });
+            }
+
+            // Get user's exchange requests
+            const requests = await ExchangeRequest.find({ userId: id })
+                .select("title status estimatedCredits category complexity createdAt")
+                .sort({ createdAt: -1 })
+                .limit(20)
+                .lean();
+
+            // Get user's proposals
+            const proposals = await ExchangeProposal.find({ proposerId: id })
+                .populate("exchangeRequestId", "title status estimatedCredits")
+                .select("status acceptanceType createdAt exchangeRequestId")
+                .sort({ createdAt: -1 })
+                .limit(20)
+                .lean();
+
+            // Get user's ratings received
+            const ratingsReceived = await Rating.find({ ratedUserId: id })
+                .populate("raterId", "fullName profileImage")
+                .populate("exchangeRequestId", "title")
+                .sort({ createdAt: -1 })
+                .limit(10)
+                .lean();
+
+            // Get user's average rating
+            const ratingAgg = await Rating.aggregate([
+                { $match: { ratedUserId: user._id } },
+                { $group: { _id: null, avg: { $avg: "$stars" }, count: { $sum: 1 } } },
+            ]);
+            const averageRating = ratingAgg.length > 0 ? ratingAgg[0].avg : 0;
+            const ratingsCount = ratingAgg.length > 0 ? ratingAgg[0].count : 0;
+
+            // Get credit history
+            const creditHistory = await CreditHistory.find({ userId: id })
+                .sort({ createdAt: -1 })
+                .limit(15)
+                .lean();
+
+            // Counts
+            const totalRequests = await ExchangeRequest.countDocuments({ userId: id });
+            const completedRequests = await ExchangeRequest.countDocuments({ userId: id, status: "completed" });
+            const totalProposals = await ExchangeProposal.countDocuments({ proposerId: id });
+
+            res.status(200).json({
+                user,
+                stats: {
+                    totalRequests,
+                    completedRequests,
+                    totalProposals,
+                    averageRating: Math.round(averageRating * 10) / 10,
+                    ratingsCount,
+                },
+                requests,
+                proposals,
+                ratingsReceived,
+                creditHistory,
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // ── Exchange Management ──────────────────────────────────────────────────
+    /**
+     * GET /api/admin/exchanges
+     * List all exchange requests with pagination and status filtering
+     */
+    async getAllExchanges(req, res, next) {
+        try {
+            const { page = 1, limit = 20, status, search } = req.query;
+            const skip = (parseInt(page) - 1) * parseInt(limit);
+
+            const query = {};
+
+            if (status && ["open", "in_progress", "completed", "cancelled"].includes(status)) {
+                query.status = status;
+            }
+
+            if (search) {
+                query.$or = [
+                    { title: { $regex: search, $options: "i" } },
+                    { skillSearched: { $regex: search, $options: "i" } },
+                ];
+            }
+
+            const exchanges = await ExchangeRequest.find(query)
+                .populate("userId", "fullName email profileImage")
+                .populate("selectedProposal", "proposerId status")
+                .select("title description skillSearched category level status estimatedCredits lockedCredits complexity estimatedDuration desiredDeadline views createdAt")
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(parseInt(limit))
+                .lean();
+
+            const total = await ExchangeRequest.countDocuments(query);
+
+            // Enrich with proposal count
+            const enrichedExchanges = await Promise.all(
+                exchanges.map(async (ex) => {
+                    const proposalCount = await ExchangeProposal.countDocuments({ exchangeRequestId: ex._id });
+                    return { ...ex, proposalCount };
+                })
+            );
+
+            // Status breakdown for filters
+            const statusCounts = {
+                all: await ExchangeRequest.countDocuments(),
+                open: await ExchangeRequest.countDocuments({ status: "open" }),
+                in_progress: await ExchangeRequest.countDocuments({ status: "in_progress" }),
+                completed: await ExchangeRequest.countDocuments({ status: "completed" }),
+                cancelled: await ExchangeRequest.countDocuments({ status: "cancelled" }),
+            };
+
+            res.status(200).json({
+                exchanges: enrichedExchanges,
+                statusCounts,
+                pagination: {
+                    page: parseInt(page),
+                    limit: parseInt(limit),
+                    total,
+                    pages: Math.ceil(total / parseInt(limit)),
+                },
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * GET /api/admin/exchanges/:id
+     * Get full details for a single exchange
+     */
+    async getExchangeDetails(req, res, next) {
+        try {
+            const { id } = req.params;
+
+            const exchange = await ExchangeRequest.findById(id)
+                .populate("userId", "fullName email profileImage credits role")
+                .populate({
+                    path: "selectedProposal",
+                    populate: { path: "proposerId", select: "fullName email profileImage credits" },
+                })
+                .lean();
+
+            if (!exchange) {
+                return res.status(404).json({ message: "Exchange not found" });
+            }
+
+            // Get all proposals for this exchange
+            const proposals = await ExchangeProposal.find({ exchangeRequestId: id })
+                .populate("proposerId", "fullName email profileImage")
+                .populate("examinerReview.examinerId", "fullName email")
+                .sort({ createdAt: -1 })
+                .lean();
+
+            // Get ratings for this exchange
+            const ratings = await Rating.find({ exchangeRequestId: id })
+                .populate("raterId", "fullName profileImage")
+                .populate("ratedUserId", "fullName profileImage")
+                .lean();
+
+            res.status(200).json({
+                exchange,
+                proposals,
+                ratings,
             });
         } catch (error) {
             next(error);
