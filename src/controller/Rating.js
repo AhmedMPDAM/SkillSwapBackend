@@ -83,6 +83,43 @@ class RatingController {
     }
 
     /**
+     * Get top-rated users (flat list with filters)
+     * GET /api/profile/top-rated
+     */
+    async getTopRated(req, res, next) {
+        try {
+            const { category, search, minRating, minExchanges, limit, skip } = req.query;
+            const result = await RatingService.getTopRatedUsers({
+                category,
+                search,
+                minRating,
+                minExchanges,
+                limit: parseInt(limit) || 50,
+                skip: parseInt(skip) || 0,
+            });
+            res.status(200).json(result);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * Get top-rated users grouped by category
+     * GET /api/profile/top-rated/by-category
+     */
+    async getTopRatedByCategory(req, res, next) {
+        try {
+            const { limit } = req.query;
+            const result = await RatingService.getTopRatedByCategory({
+                limit: parseInt(limit) || 10,
+            });
+            res.status(200).json(result);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
      * Get another user's public profile with stats
      * GET /api/profile/:userId/public
      */

@@ -93,6 +93,10 @@ router.get("/ratings/received", authenticateToken, RatingController.getReceivedR
 router.get("/ratings/given", authenticateToken, RatingController.getGivenRatings);
 router.post("/ratings", authenticateToken, RatingController.createRating);
 
+// Top rated users
+router.get("/top-rated", authenticateToken, RatingController.getTopRated);
+router.get("/top-rated/by-category", authenticateToken, RatingController.getTopRatedByCategory);
+
 // Public profile (view another user's profile with stats, ratings, badges)
 router.get("/:userId/public", authenticateToken, RatingController.getPublicProfile);
 
