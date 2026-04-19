@@ -1,4 +1,5 @@
-const Submission = require("../models/submission");
+const SubmissionRepositoryClass = require("../repositories/Submission");
+const submissionRepository = new SubmissionRepositoryClass();
 const MarketplaceRepositoryClass = require("../repositories/Marketplace");
 const marketplaceRepository = new MarketplaceRepositoryClass();
 const socketUtil = require("../utils/socket");
@@ -49,12 +50,12 @@ class SubmissionService {
             await this._resolveParticipants(requestId, userId);
 
         // Count existing submissions for THIS role to determine revision number
-        const existingCount = await Submission.countDocuments({
+        const existingCount = await submissionRepository.countSubmissions({
             exchangeRequestId: requestId,
             role,
         });
 
-        const submission = await Submission.create({
+        const submission = await submissionRepository.createSubmission({
             exchangeRequestId: requestId,
             proposalId,
             submitterId: userId,
@@ -112,10 +113,7 @@ class SubmissionService {
         if (!isParticipant)
             throw new Error("Unauthorized: Only exchange participants can view submissions");
 
-        return Submission.find({ exchangeRequestId: requestId })
-            .populate("submitterId", "fullName profileImage")
-            .sort({ createdAt: -1 })
-            .lean();
+        return submissionRepository.findByRequest(requestId);
     }
 
     /**
@@ -123,7 +121,7 @@ class SubmissionService {
      * The reviewer must NOT be the same person who submitted.
      */
     async requestRevision(submissionId, userId, revisionNotes) {
-        const submission = await Submission.findById(submissionId).lean();
+        const submission = await submissionRepository.findById(submissionId);
         if (!submission) throw new Error("Submission not found");
         if (submission.status !== "pending_review")
             throw new Error("This submission has already been reviewed");
@@ -142,17 +140,11 @@ class SubmissionService {
         if (!revisionNotes || !revisionNotes.trim())
             throw new Error("Revision notes are required");
 
-        const updated = await Submission.findByIdAndUpdate(
-            submissionId,
-            {
-                $set: {
-                    status: "revision_requested",
-                    revisionNotes: revisionNotes.trim(),
-                    reviewedAt: new Date(),
-                },
-            },
-            { new: true }
-        ).lean();
+        const updated = await submissionRepository.updateSubmission(submissionId, {
+            status: "revision_requested",
+            revisionNotes: revisionNotes.trim(),
+            reviewedAt: new Date(),
+        });
 
         // Notify the submitter
         try {
@@ -176,7 +168,7 @@ class SubmissionService {
      * Does NOT auto-complete the exchange (credits handled separately).
      */
     async approveSubmission(submissionId, userId) {
-        const submission = await Submission.findById(submissionId).lean();
+        const submission = await submissionRepository.findById(submissionId);
         if (!submission) throw new Error("Submission not found");
         if (submission.status !== "pending_review")
             throw new Error("This submission has already been reviewed");
@@ -190,11 +182,10 @@ class SubmissionService {
 
         await this._resolveParticipants(requestId, userId);
 
-        const updated = await Submission.findByIdAndUpdate(
-            submissionId,
-            { $set: { status: "approved", reviewedAt: new Date() } },
-            { new: true }
-        ).lean();
+        const updated = await submissionRepository.updateSubmission(submissionId, {
+            status: "approved",
+            reviewedAt: new Date(),
+        });
 
         // Notify the submitter
         try {
@@ -217,17 +208,17 @@ class SubmissionService {
      * Check if both sides have at least one approved submission.
      */
     async checkBothApproved(requestId) {
-        const ownerApproved = await Submission.findOne({
+        const ownerApproved = await submissionRepository.findOne({
             exchangeRequestId: requestId,
             role: "owner",
             status: "approved",
-        }).lean();
+        });
 
-        const proposerApproved = await Submission.findOne({
+        const proposerApproved = await submissionRepository.findOne({
             exchangeRequestId: requestId,
             role: "proposer",
             status: "approved",
-        }).lean();
+        });
 
         return {
             ownerApproved: !!ownerApproved,

@@ -18,27 +18,12 @@ router.get("/exchanges/:id", authMiddleware, adminMiddleware, AdminController.ge
 
 // ── Examiner routes ─────────────────────────────────────────────────────────
 // GET  /api/admin/examiner/queue         → list all admin_processing proposals
-router.get(
-    "/examiner/queue",
-    authMiddleware,
-    examinerMiddleware,
-    AdminController.getExaminationQueue
-);
+router.get("/examiner/queue", authMiddleware, examinerMiddleware, AdminController.getExaminationQueue);
 
 // GET  /api/admin/examiner/queue/:id     → single proposal detail
-router.get(
-    "/examiner/queue/:id",
-    authMiddleware,
-    examinerMiddleware,
-    AdminController.getProposalForReview
-);
+router.get("/examiner/queue/:id", authMiddleware, examinerMiddleware, AdminController.getProposalForReview);
 
 // POST /api/admin/examiner/queue/:id/review  → approve (with optional modifications)
-router.post(
-    "/examiner/queue/:id/review",
-    authMiddleware,
-    examinerMiddleware,
-    AdminController.reviewProposal
-);
+router.post("/examiner/queue/:id/review", authMiddleware, examinerMiddleware, AdminController.reviewProposal);
 
 module.exports = router;

@@ -1,6 +1,5 @@
-const Rating = require("../models/rating");
-const ExchangeRequest = require("../models/exchangeRequest");
-const ExchangeProposal = require("../models/exchangeProposal");
+const RatingRepositoryClass = require("../repositories/Rating");
+const ratingRepository = new RatingRepositoryClass();
 
 // ── Badge milestone thresholds ──────────────────────────────────────────────
 const BADGE_MILESTONES = [
@@ -28,18 +27,18 @@ class RatingService {
         }
 
         // Check if rating already exists for this exchange by this rater
-        const existing = await Rating.findOne({ raterId, exchangeRequestId });
+        const existing = await ratingRepository.findOne({ raterId, exchangeRequestId });
         if (existing) {
             throw new Error("You have already rated this exchange");
         }
 
         // Verify the exchange is completed
-        const request = await ExchangeRequest.findById(exchangeRequestId).lean();
+        const request = await ratingRepository.findRequestById(exchangeRequestId);
         if (!request || request.status !== "completed") {
             throw new Error("You can only rate completed exchanges");
         }
 
-        const rating = await Rating.create({
+        return await ratingRepository.createRating({
             exchangeRequestId,
             proposalId,
             raterId,
@@ -47,51 +46,27 @@ class RatingService {
             stars,
             comment: comment || "",
         });
-
-        return rating;
     }
 
     /**
      * Get all ratings received by a user (paginated, newest first)
      */
     async getUserRatingsReceived(userId, limit = 50, skip = 0) {
-        return await Rating.find({ ratedUserId: userId })
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit)
-            .populate("raterId", "fullName profileImage")
-            .populate("exchangeRequestId", "title")
-            .lean();
+        return await ratingRepository.getRatingsReceived(userId, limit, skip);
     }
 
     /**
      * Get all ratings given by a user (paginated)
      */
     async getUserRatingsGiven(userId, limit = 50, skip = 0) {
-        return await Rating.find({ raterId: userId })
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit)
-            .populate("ratedUserId", "fullName profileImage")
-            .populate("exchangeRequestId", "title")
-            .lean();
+        return await ratingRepository.getRatingsGiven(userId, limit, skip);
     }
 
     /**
      * Calculate the average rating (stars) for a user
      */
     async getUserAverageRating(userId) {
-        const mongoose = require("mongoose");
-        const result = await Rating.aggregate([
-            { $match: { ratedUserId: new mongoose.Types.ObjectId(userId) } },
-            {
-                $group: {
-                    _id: null,
-                    average: { $avg: "$stars" },
-                    count: { $sum: 1 },
-                },
-            },
-        ]);
+        const result = await ratingRepository.getAverageRating(userId);
 
         if (result.length === 0) {
             return { average: 0, count: 0 };
@@ -107,44 +82,8 @@ class RatingService {
      * Count completed exchanges for a user (as proposer or request owner)
      */
     async getCompletedExchangeCount(userId) {
-        const mongoose = require("mongoose");
-        const uid = new mongoose.Types.ObjectId(userId);
-
-        // Count as request owner
-        const asOwner = await ExchangeRequest.countDocuments({
-            userId: uid,
-            status: "completed",
-        });
-
-        // Count as proposer (proposals that are in a completed request)
-        const asProposer = await ExchangeProposal.countDocuments({
-            proposerId: uid,
-            status: { $in: ["accepted", "examiner_approved"] },
-        });
-
-        // To avoid double-counting, only count proposals whose request is actually completed
-        const completedAsProposer = await ExchangeProposal.aggregate([
-            {
-                $match: {
-                    proposerId: uid,
-                    status: { $in: ["accepted", "examiner_approved"] },
-                },
-            },
-            {
-                $lookup: {
-                    from: "exchangerequests",
-                    localField: "exchangeRequestId",
-                    foreignField: "_id",
-                    as: "request",
-                },
-            },
-            { $unwind: "$request" },
-            { $match: { "request.status": "completed" } },
-            { $count: "total" },
-        ]);
-
-        const proposerCount = completedAsProposer.length > 0 ? completedAsProposer[0].total : 0;
-
+        const asOwner = await ratingRepository.countCompletedAsOwner(userId);
+        const proposerCount = await ratingRepository.countCompletedAsProposer(userId);
         return asOwner + proposerCount;
     }
 
@@ -160,77 +99,20 @@ class RatingService {
      * Returns a flat list of users sorted by average rating.
      */
     async getTopRatedUsers({ category, search, minRating, minExchanges, limit, skip } = {}) {
-        const mongoose = require("mongoose");
         const User = require("../models/user");
 
         // Step 1: Aggregate ratings to get average rating per user
-        const pipeline = [
-            {
-                $group: {
-                    _id: "$ratedUserId",
-                    averageRating: { $avg: "$stars" },
-                    totalRatings: { $sum: 1 },
-                },
-            },
-        ];
+        const ratingResults = await ratingRepository.aggregateTopRated(minRating);
 
-        // Filter by minimum rating
-        if (minRating) {
-            pipeline.push({ $match: { averageRating: { $gte: parseFloat(minRating) } } });
-        }
-
-        // Sort by average rating descending
-        pipeline.push({ $sort: { averageRating: -1, totalRatings: -1 } });
-
-        const ratingResults = await Rating.aggregate(pipeline);
-
-        // Step 2: Get user details and their categories from exchange requests
+        // Step 2: Get user details
         const userIds = ratingResults.map((r) => r._id);
         const users = await User.find({ _id: { $in: userIds } })
             .select("fullName profileImage skills bio location")
             .lean();
 
-        // Step 3: Get categories each user has participated in (via exchange requests)
-        const exchangeCategories = await ExchangeRequest.aggregate([
-            {
-                $match: {
-                    status: "completed",
-                    userId: { $in: userIds },
-                },
-            },
-            {
-                $group: {
-                    _id: "$userId",
-                    categories: { $addToSet: "$category" },
-                },
-            },
-        ]);
-
-        // Also get categories from proposals (as proposer)
-        const proposalCategories = await ExchangeProposal.aggregate([
-            {
-                $match: {
-                    proposerId: { $in: userIds },
-                    status: { $in: ["accepted", "examiner_approved"] },
-                },
-            },
-            {
-                $lookup: {
-                    from: "exchangerequests",
-                    localField: "exchangeRequestId",
-                    foreignField: "_id",
-                    as: "request",
-                },
-            },
-            { $unwind: "$request" },
-            { $match: { "request.status": "completed" } },
-            {
-                $group: {
-                    _id: "$proposerId",
-                    categories: { $addToSet: "$request.category" },
-                },
-            },
-        ]);
+        // Step 3: Get categories each user has participated in
+        const exchangeCategories = await ratingRepository.getCategoriesAsOwner(userIds);
+        const proposalCategories = await ratingRepository.getCategoriesAsProposer(userIds);
 
         // Merge categories
         const categoryMap = {};
