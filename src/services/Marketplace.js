@@ -324,6 +324,7 @@ class MarketplaceService {
 
         // Create proposal
         const proposal = await marketplaceRepository.createProposal({
+            image: request.image,
             exchangeRequestId: requestId,
             proposerId: userId,
             coverLetter,

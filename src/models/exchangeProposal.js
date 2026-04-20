@@ -3,6 +3,11 @@ const mongoose = require("mongoose");
 const exchangeProposalSchema = new mongoose.Schema(
     {
         exchangeRequestId: {
+            image: {
+                type: String,
+                default: "",
+            },
+
             type: mongoose.Schema.Types.ObjectId,
             ref: "ExchangeRequest",
             required: true,
