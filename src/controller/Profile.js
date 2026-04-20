@@ -4,7 +4,6 @@ class ProfileController {
     async getProfile(req, res, next) {
         try {
             const user = await ProfileService.getProfile(req.user.id);
-            // User is already a lean object
             delete user.password;
             res.status(200).json(user);
         } catch (error) {

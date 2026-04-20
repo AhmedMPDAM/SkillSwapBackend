@@ -6,45 +6,20 @@ const {
     serverTimestamp,
 } = require("firebase/firestore");
 
-/**
- * ChatService
- *
- * Manages chat rooms in Firestore. Each chat is
- *   chats/{chatId}
- * where chatId = proposalId (unique per proposal).
- *
- * Sub-collection:
- *   chats/{chatId}/messages/{messageId}
- *
- * Chat document shape:
- * {
- *   proposalId:   string,
- *   requestId:    string,
- *   requestTitle: string,
- *   participants: [requestOwnerId, proposerId],   // exactly 2 users
- *   requestOwnerInfo: { id, name },
- *   proposerInfo:     { id, name },
- *   offerExpiresAt:   Timestamp  (=== desiredDeadline of the request),
- *   isActive:         boolean,
- *   createdAt:        Timestamp,
- *   lastMessageAt:    Timestamp | null,
- *   lastMessageText:  string | null,
- * }
- */
 class ChatService {
     /**
      * Called when a proposal is accepted (accept_deal OR admin acceptance).
      * Creates the Firestore chat document if it doesn't already exist.
      *
-     * @param {string} proposalId   - MongoDB ObjectId string
-     * @param {string} requestId    - MongoDB ObjectId string
-     * @param {string} requestOwnerId
-     * @param {string} requestOwnerName
-     * @param {string} proposerId
-     * @param {string} proposerName
-     * @param {Date}   offerExpiresAt  - request.desiredDeadline
-     * @param {string} requestTitle
-     */
+ * @param {string} proposalId   - MongoDB ObjectId string
+ * @param {string} requestId    - MongoDB ObjectId string
+ * @param {string} requestOwnerId
+ * @param {string} requestOwnerName
+ * @param {string} proposerId
+ * @param {string} proposerName
+ * @param {Date}   offerExpiresAt  - request.desiredDeadline
+ * @param {string} requestTitle
+ */
     async createChatRoom({
         proposalId,
         requestId,
