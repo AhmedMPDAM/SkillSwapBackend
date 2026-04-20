@@ -370,11 +370,20 @@ class AdminController {
             const requestUserId = (request.userId._id || request.userId).toString();
             const proposerId = (proposal.proposerId._id || proposal.proposerId).toString();
 
-            // Decide final credits
+            // ── DECIDE FINAL CREDITS ──────────────────────────────────────────
+            // lockedCredits = estimatedCredits - 4 (examination fee was already
+            // deducted from escrow when the user submitted for admin_quantification).
+            //
+            // • Examiner approves "as-is"   → pay out lockedCredits (post-fee amount)
+            // • Examiner sets a custom value → that is the absolute final payout
+            const lockedCredits = request.lockedCredits != null
+                ? request.lockedCredits
+                : request.estimatedCredits;
+
             const finalCredits =
-                assignedCredits != null && !isNaN(assignedCredits)
+                assignedCredits != null && assignedCredits !== "" && !isNaN(Number(assignedCredits))
                     ? Number(assignedCredits)
-                    : request.estimatedCredits;
+                    : lockedCredits; // no override → keep post-fee amount
 
             // Update proposal → examiner_approved
             const updatedProposal = await ExchangeProposal.findByIdAndUpdate(
@@ -396,15 +405,14 @@ class AdminController {
                 $set: { status: "in_progress", selectedProposal: id },
             });
 
-            // ── ESCROW ADJUSTMENT: examiner may have changed the credit amount ──
-            // The owner already paid estimatedCredits into escrow at posting time.
-            // We only charge/refund the DIFFERENCE here.
-            const lockedCredits = request.lockedCredits || request.estimatedCredits || 0;
+            // ── ESCROW ADJUSTMENT ─────────────────────────────────────────────
+            // lockedCredits already reflects the 4-credit examination fee.
+            // Charge/refund only the EXTRA delta from the examiner override.
             const creditDiff = finalCredits - lockedCredits;
 
             try {
                 if (creditDiff > 0) {
-                    // Examiner raised credits — charge the extra from the owner
+                    // Examiner set amount ABOVE post-fee escrow → charge extra from owner
                     await CreditService.deductCredits(
                         requestUserId,
                         creditDiff,
@@ -413,7 +421,7 @@ class AdminController {
                         id
                     );
                 } else if (creditDiff < 0) {
-                    // Examiner reduced credits — refund the difference to the owner
+                    // Examiner set amount BELOW post-fee escrow → refund difference to owner
                     await CreditService.addCredits(
                         requestUserId,
                         Math.abs(creditDiff),
@@ -422,7 +430,7 @@ class AdminController {
                         id
                     );
                 }
-                // Update the locked amount so completeExchange pays the right figure
+                // Persist the final locked amount so completeExchange pays correctly
                 await ExchangeRequest.findByIdAndUpdate(requestId, {
                     $set: { lockedCredits: finalCredits },
                 });

@@ -5,6 +5,9 @@ const UserRepositoryClass = require("../repositories/Auth");
 const userRepository = new UserRepositoryClass();
 const socketUtil = require("../utils/socket");
 const ChatService = require("./Chat");
+const ExchangeRequest = require("../models/exchangeRequest");
+
+const ADMIN_EXAMINATION_FEE = 4; // credits deducted from escrow when admin examination is requested
 
 class MarketplaceService {
     /**
@@ -314,7 +317,7 @@ class MarketplaceService {
 
         if (acceptanceType === "admin_quantification") {
             status = "admin_processing";
-            admin_quantification_cost = 4; // 4 credits cost for admin verification
+            admin_quantification_cost = ADMIN_EXAMINATION_FEE;
         } else if (acceptanceType === "accept_deal") {
             status = "accepted"; // Immediately accept
         }
@@ -328,6 +331,14 @@ class MarketplaceService {
             admin_quantification_cost,
             status,
         });
+
+        if (acceptanceType === "admin_quantification") {
+            const currentLocked = request.lockedCredits || request.estimatedCredits || 0;
+            const newLocked = Math.max(0, currentLocked - ADMIN_EXAMINATION_FEE);
+            await ExchangeRequest.findByIdAndUpdate(requestId, {
+                $set: { lockedCredits: newLocked },
+            });
+        }
 
         // Add proposal to request
         await marketplaceRepository.updateRequestRaw(requestId, { $push: { proposals: proposal._id } });
